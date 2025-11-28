@@ -1,0 +1,3 @@
+id,uuid,recognition_type,award_name,level,recipient_id,recipient_uuid,sender_id,sender_uuid,sent_at,message,award_points,approval_status,rejection_reason,created_at
+1,1205d657-3180-41ff-9f28-41923ad5f706,award,Great Job,gold,1,123062c7f-03fa-43c7-a154-7dbc818ca2bf,1,123062c7f-03fa-43c7-a154-7dbc818ca2bf,2025-11-27T10:00:00Z,Thanks for your hard work!,25,PENDING,,2025-11-27T10:00:00Z
+

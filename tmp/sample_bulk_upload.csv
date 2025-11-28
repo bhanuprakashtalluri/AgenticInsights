@@ -1,0 +1,3 @@
+recognition_uuid,recognition_type_uuid,award_name,level,recipient_uuid,sender_uuid,sent_at,message,award_points,approval_status,rejection_reason
+, d518af33-8325-445d-8b9c-cc030795590b,Great Job,gold,23062c7f-03fa-43c7-a154-7dbc818ca2bf,23062c7f-03fa-43c7-a154-7dbc818ca2bf,2025-11-27T10:00:00Z,"Well done!",25,PENDING,
+

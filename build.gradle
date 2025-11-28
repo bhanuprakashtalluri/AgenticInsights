@@ -1,0 +1,60 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '3.2.6'
+    id 'io.spring.dependency-management' version '1.1.0'
+}
+
+group = 'org.example'
+version = '1.0-SNAPSHOT'
+
+// Modern Java toolchain configuration (replaces deprecated JavaPluginConvention usage warnings)
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+// Optionally enforce release target for cross-compilation (uncomment if needed)
+// tasks.withType(JavaCompile) { options.release = 21 }
+
+// Remove legacy sourceCompatibility setting
+
+defaultTasks 'clean', 'build'
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation 'org.springframework.boot:spring-boot-starter-graphql'
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+
+    implementation 'org.postgresql:postgresql:42.6.0'
+    implementation 'org.flywaydb:flyway-core'
+
+    // CSV export
+    implementation 'org.apache.commons:commons-csv:1.10.0'
+
+    // Chart generation
+    implementation 'org.knowm.xchart:xchart:3.8.1'
+
+    // Java 8+ date/time support
+    implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310'
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation platform('org.junit:junit-bom:5.10.0')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+}
+
+tasks.withType(Test) {
+    useJUnitPlatform()
+}
+
+// Allow bootRun
+tasks.named('bootRun') {
+    if (project.hasProperty('args')) {
+        args project.property('args').toString().split(',')
+    }
+}

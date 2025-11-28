@@ -1,0 +1,42 @@
+type Employee {
+  id: ID!
+  uuid: String!
+  firstName: String
+  lastName: String
+  unitId: Int
+  managerId: Int
+  email: String
+  joiningDate: String
+  role: String
+}
+
+type RecognitionType {
+  id: ID!
+  uuid: String!
+  typeName: String
+}
+
+type Recognition {
+  id: ID!
+  uuid: String!
+  recognitionType: RecognitionType
+  awardName: String
+  level: String
+  recipientId: Int
+  senderId: Int
+  sentAt: String
+  message: String
+  awardPoints: Int
+  approvalStatus: String
+  rejectionReason: String
+}
+
+type Query {
+  recognitions(page: Int = 0, size: Int = 20): [Recognition]
+  employees: [Employee]
+  recognitionTypes: [RecognitionType]
+}
+
+type Mutation {
+  _dummy: String
+}
