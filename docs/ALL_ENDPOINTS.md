@@ -51,7 +51,8 @@ Canonical endpoints (recommended):
   - GET /admin/imports/{jobId}/errors  — list errors for the job (replace `{jobId}` with the id returned by the import call)
 
 - Exports (unified):
-  - GET /recognitions/export?format=csv&stream=true  (example)
+  - GET /recognitions/export.csv  (CSV export)
+  - GET /recognitions/export.json (JSON export)
 
 - Insights & graphs:
   - GET /recognitions/insights?days=30  (example)
@@ -92,45 +93,78 @@ curl -X PATCH -H "Content-Type: application/json" \
 # Start CSV import (multipart)
 curl -X POST -F "file=@/path/to/import.csv" http://localhost:8080/admin/imports
 
-# Export CSV (streamed)
-curl -s "http://localhost:8080/recognitions/export?format=csv&stream=true" -o recognitions.csv
+# Export CSV (filtered)
+curl -s "http://localhost:8080/recognitions/export.csv?role=manager&days=60" -o recognitions.csv
+
+# Export JSON (filtered)
+curl -s "http://localhost:8080/recognitions/export.json?recipientId=42&senderId=7" | jq .
 ```
 
 ---
 
-## 1) Admin endpoints (dev only)
+## 1) Admin endpoints (cleaned & simplified)
 
 ### POST /admin/seed/run
-- Purpose: dev-only seed/run helper (placeholder)
-- Method: POST
-- Path params: none
-- Query params: none
-- Request body: none
-- Response: 200 OK text message
-- Notes: No changes; placeholder to run seeding manually.
+- Purpose: dev-only seed/run helper
+- Guard: returns 403 when `app.dev.enabled=false`
+- Response examples:
+  - 200 OK: `{ "status": 200, "message": "Run SQL seed manually or enable dev seed to run programmatically" }`
+  - 403 Forbidden when disabled: `{ "status": 403, "error": "DEV_DISABLED", "message": "dev seed disabled" }`
 
-### POST /admin/recognitions/bulk-upload
-- Purpose: simple synchronous CSV import (JPA-batched importer)
-- Method: POST
-- Request body: multipart/form-data with field `file` — CSV file to import
-- Example request: `POST /admin/recognitions/bulk-upload` (multipart file upload)
+### POST /admin/imports
+- Purpose: start async import (COPY-based). Accepts CSV file in multipart `file`.
+- Consumes: multipart/form-data
+- Body: form-data → key `file` (Type: File)
+- Response:
+  - 202 Accepted: `{ "jobId": <number>, ... }`
+  - 400 Bad Request when file missing: `{ "error": "MISSING_MULTIPART_PART", "message": "Required multipart part 'file' is missing", ... }`
+  - 500 on failure: `{ "error": "IMPORT_START_FAILED", "message": "..." }`
 
-### POST /admin/recognitions/bulk-import-copy
-- Purpose: fast COPY-based import (staging + SQL move)
-- Method: POST
-- Request: multipart/form-data with field `file` (CSV)
-- Example request: `POST /admin/recognitions/bulk-import-copy` (multipart file upload)
-- Response (example): `{ "jobId": 12345, "inserted": 1000, "failed": 12 }`
+### GET /admin/imports/{jobId}
+- Purpose: get async import job status
+- Path: `{jobId}` returned by POST /admin/imports
+- Response: JSON status payload with counts and timestamps
+  - Example: `{ "id": 1, "filename": "sample_import.csv", "status": "PARTIAL", "total_rows": 3, "success_count": 1, "failed_count": 2, "created_at": "...", "started_at": "...", "finished_at": "..." }`
 
 ### GET /admin/imports/{jobId}/errors
-- Purpose: paginated JSON listing of errors for a given import job
-- Method: GET
-- Example: `GET /admin/imports/{jobId}/errors?page=0&size=50` (replace `{jobId}` with the id returned by the import call)
+- Purpose: list import errors (paginated JSON)
+- Query: `page` (default 0), `size` (default 50)
+- Response: `{ "items": [ { "id": ..., "row_num": ..., "raw_data": "...", "error_message": "...", "created_at": "..." } ], "page": 0, "size": 50, "totalElements": 2 }`
 
 ### GET /admin/imports/{jobId}/errors/csv
-- Purpose: download a CSV of import errors for jobId
-- Method: GET
-- Example: `GET /admin/imports/{jobId}/errors/csv` (replace `{jobId}` with the id returned by the import call)
+- Purpose: download CSV of import errors for the job
+- Response: attachment `import_errors_{jobId}.csv`
+
+### GET /admin/dev-mode
+- Purpose: retrieve current dev mode state
+- Response: `{ "enabled": true|false, "mode": "DEV_ENABLED"|"DEV_DISABLED" }`
+
+### PATCH /admin/dev-mode
+- Purpose: toggle dev mode runtime. Body `{ "enabled": true|false }`.
+- Takes effect immediately for guarded endpoints (e.g., `/admin/seed/run`).
+- Success: `200 OK { "status":200, "enabled": true, "mode": "DEV_ENABLED" }`
+- Errors:
+  - Missing field: `400 { "error":"MISSING_FIELD" }`
+  - Wrong type: `400 { "error":"INVALID_FIELD_TYPE" }`
+
+Removed legacy endpoints
+- POST /admin/recognitions/bulk-upload (JPA-batched) — removed
+- POST /admin/recognitions/bulk-import-copy — removed
+
+Curl examples
+```bash
+# Start async import (multipart)
+curl -X POST -F "file=@tmp/sample_import.csv" http://localhost:8080/admin/imports
+
+# Check job status
+curl -s http://localhost:8080/admin/imports/1 | jq .
+
+# List errors (JSON)
+curl -s "http://localhost:8080/admin/imports/1/errors?page=0&size=50" | jq .
+
+# Download errors CSV
+curl -OJ http://localhost:8080/admin/imports/1/errors/csv
+```
 
 ---
 
@@ -177,20 +211,15 @@ Base path: /recognitions
 - Method: DELETE
 - Example: `DELETE /recognitions/1`
 
-### GET /recognitions/export?format=csv&stream=true
-- Purpose: download/stream CSV of recognitions (example)
+### GET /recognitions/export.csv
+- Purpose: download CSV of recognitions (supports filters)
 - Method: GET
-- Example: `GET /recognitions/export?format=csv&stream=true`
+- Example: `GET /recognitions/export.csv?role=manager&days=60`
 
 ### GET /recognitions/export.json
-- Purpose: export JSON array of recognitions
+- Purpose: export JSON array of recognitions (supports filters)
 - Method: GET
-- Example: `GET /recognitions/export.json`
-
-### GET /recognitions/export-stream.csv
-- Purpose: stream large CSV via StreamingResponseBody
-- Method: GET
-- Example: `GET /recognitions/export-stream.csv`
+- Example: `GET /recognitions/export.json?recipientId=42&senderId=7&days=15`
 
 ### GET /recognitions/insights?days=30
 - Purpose: overall heuristic insights (daily series, totals)
@@ -319,18 +348,48 @@ Base path: /insights
 - Example: `GET /insights/unit/3?days=30`
 
 ### GET /insights/cohort?days=30
-- Example: `GET /insights/cohort?days=30`
+- Removed: cohort endpoint has been dropped to simplify the API surface. Use employee/unit/role/manager insights as needed.
 
 ---
 
-## 6) Lookup endpoints
-Base path: /lookup
+## 6) Lookup endpoints (Removed / Deprecated)
 
-### GET /lookup/employee-by-uuid/123e4567-e89b-12d3-a456-426614174000
-- Example: `GET /lookup/employee-by-uuid/123e4567-e89b-12d3-a456-426614174000`
+The former lookup endpoints have been removed to reduce duplication:
+- GET /lookup/employee-by-uuid/{uuid}
+- GET /lookup/type-by-uuid/{uuid}
 
-### GET /lookup/type-by-uuid/43804f52-998d-400c-813d-19ed20011ed8
-- Example: `GET /lookup/type-by-uuid/43804f52-998d-400c-813d-19ed20011ed8`
+Use canonical resource endpoints instead:
+- GET /employees/uuid/{uuid}
+- GET /recognition-types/uuid/{uuid}
+
+Rationale for removal:
+- Identical payloads to canonical endpoints
+- Reduced surface area and documentation/testing burden
+- Simplifies caching and avoids divergence
+
+If you previously used lookup endpoints:
+- Replace /lookup/employee-by-uuid/{uuid} with /employees/uuid/{uuid}
+- Replace /lookup/type-by-uuid/{uuid} with /recognition-types/uuid/{uuid}
+
+Batch / polymorphic lookup future design (optional):
+A future identity resolution endpoint could reintroduce a consolidated batch API without reviving the deprecated single-object paths:
+```
+POST /identity/resolve
+{
+  "employees": ["uuid1", "uuid2"],
+  "types": ["uuidA"],
+  "recognitions": ["uuidX"]
+}
+```
+Response example:
+```
+{
+  "employees": { "uuid1": { /* employee */ }, "uuid2": null },
+  "types": { "uuidA": { /* type */ } },
+  "recognitions": { "uuidX": { /* recognition */ } },
+  "missing": { "employees": ["uuid2"], "types": [], "recognitions": [] }
+}
+```
 
 ---
 
@@ -348,11 +407,47 @@ Base path: /reports
 
 ---
 
-## 8) Metrics
-Base path: /metrics
+## 8) Metrics (updated structured response)
 
 ### GET /metrics/summary?days=30
-- Example: `GET /metrics/summary?days=30`
+- Purpose: return structured metrics over a window
+- Query params:
+  - days (optional, >0). Default 30 when missing/<=0.
+- Response shape:
+  {
+    "window": { "from": "<ISO>", "to": "<ISO>" },
+    "totals": { "count": <int>, "points": <int> },
+    "statuses": { "approved": <int>, "rejected": <int>, "pending": <int>, "approvalRatePercent": <number> },
+    "series": { "daily": { "YYYY-MM-DD": <int>, ... } },
+    "leaderboards": {
+      "topSenders": { <senderId>: <count>, ... },
+      "topRecipients": { <recipientId>: <count>, ... }
+    },
+    "pointsDistribution": { "0-10": <int>, "11-50": <int>, "51-100": <int>, ">100": <int> },
+    "roles": {
+      "sendersByRole": { "manager": <long>, "employee": <long>, ... },
+      "recipientsByRole": { "manager": <long>, "employee": <long>, ... }
+    },
+    "managers": {
+      <managerId>: { "teamSize": <int>, "teamRecognitions": <long>, "teamPoints": <int> },
+      ...
+    }
+  }
+- Notes:
+  - Empty windows return zeros/empty maps with 200 OK.
+  - ApprovalRatePercent is 0.0 when no recognitions in window.
+
+Example:
+{
+  "window": { "from": "2025-10-29T00:00:00Z", "to": "2025-11-28T00:00:00Z" },
+  "totals": { "count": 152, "points": 1200 },
+  "statuses": { "approved": 140, "rejected": 5, "pending": 7, "approvalRatePercent": 92.105 },
+  "series": { "daily": { "2025-11-01": 5, "2025-11-02": 3 } },
+  "leaderboards": { "topSenders": { "7": 18, "12": 15 }, "topRecipients": { "42": 20, "9": 14 } },
+  "pointsDistribution": { "0-10": 30, "11-50": 80, "51-100": 25, ">100": 17 },
+  "roles": { "sendersByRole": { "manager": 40, "employee": 100 }, "recipientsByRole": { "manager": 30, "employee": 110 } },
+  "managers": { "3": { "teamSize": 8, "teamRecognitions": 22, "teamPoints": 180 } }
+}
 
 ---
 
@@ -423,10 +518,6 @@ Which would you like me to do next?
     - Lists import errors (JSON)
   - GET {{base}}/admin/imports/1/errors/csv
     - Downloads errors CSV
-  - POST {{base}}/admin/recognitions/bulk-upload
-    - Synchronous bulk upload (multipart: file)
-  - POST {{base}}/admin/recognitions/bulk-import-copy
-    - COPY-based import (multipart: file); returns `{ jobId, inserted, failed }` on success
 
 ## Admin endpoints reference (Postman-ready)
 
@@ -508,44 +599,32 @@ Below are all admin endpoints with exact method, URL, headers, query params, bod
 - Files: none
 - Response: CSV attachment (Postman can Save Response to file)
 
-5) Synchronous bulk upload (JPA-batched)
-- Method: POST
-- URL: {{base}}/admin/recognitions/bulk-upload
-- Headers:
-  - Accept: application/json
-- Query params: none
-- Body (multipart/form-data):
-  - file: File (choose local file `tmp/sample_import.csv` or a CSV matching this endpoint’s parser)
-- Files required: CSV file
-- Example response (200 OK):
-  - Body: `{ "inserted": <n>, "failed": <m>, "errors": [...] }` (shape depends on BulkImportService)
-
-6) COPY-based bulk import (sync)
-- Method: POST
-- URL: {{base}}/admin/recognitions/bulk-import-copy
-- Headers:
-  - Accept: application/json
-- Query params: none
-- Body (multipart/form-data):
-  - file: File (choose local file `tmp/sample_import.csv`)
-- Files required: `tmp/sample_import.csv`
-- Example response (200 OK):
-  - Body: `{ "jobId": 1, "inserted": 1, "failed": 2 }`
-
-7) Seed (dev helper)
-- Method: POST
-- URL: {{base}}/admin/seed/run
-- Headers: (none required)
-- Query params: none
-- Body: none
-- Files: none
-- Example response (200 OK):
-  - Body: "Run SQL seed manually or enable dev seed to run programmatically"
-
 ### Upload files (for admin endpoints)
 - For POST /admin/imports (async import): use `tmp/sample_import.csv`
-- For POST /admin/recognitions/bulk-import-copy (COPY-based import): use `tmp/sample_import.csv`
-- For POST /admin/recognitions/bulk-upload (JPA-batched import): use `tmp/sample_bulk_upload.csv` (or any CSV with the same headers)
 
 CSV headers expected by staging/bulk imports:
 - recognition_uuid,recognition_type_uuid,award_name,level,recipient_uuid,sender_uuid,sent_at,message,award_points,approval_status,rejection_reason
+
+#### Export endpoints (CSV / JSON) — updated filters
+All export variants now accept optional filters matching advanced graph scopes:
+- recipientId
+- senderId
+- role
+- managerId
+- days
+
+Examples:
+- `GET /recognitions/export.csv?role=manager&days=60`
+- `GET /recognitions/export.json?recipientId=42&senderId=7&days=15`
+
+Behavior:
+- If none of role/managerId/days provided → exports entire dataset (legacy behavior)
+- If any of role/managerId/days present → applies a time window (default 30 days when days missing or <=0)
+- Entity filters (recipientId, senderId) applied after initial selection.
+- Empty result set returns empty CSV/JSON with 200 OK.
+
+Edge cases:
+- Negative or zero days → default 30.
+- Conflicting filters simply intersect (e.g., role=manager & managerId=99).
+
+Performance: filtering is currently in-memory after fetching window; consider native queries for large datasets.

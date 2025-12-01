@@ -2,7 +2,6 @@ package org.example.controller;
 
 import org.example.dto.RecognitionResponse;
 import org.example.dto.RecognitionCreateRequest;
-import org.example.dto.RecognitionUpdateRequest;
 import org.example.model.Recognition;
 import org.example.model.RecognitionType;
 import org.example.repository.EmployeeRepository;
@@ -10,6 +9,7 @@ import org.example.repository.RecognitionRepository;
 import org.example.repository.RecognitionTypeRepository;
 import org.example.service.AIInsightsService;
 import org.example.service.ChartService;
+import org.example.service.FileStorageService;
 import org.example.service.RecognitionCsvExporter;
 import org.example.util.EntityMapper;
 import org.springframework.data.domain.Page;
@@ -19,11 +19,11 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 
-import java.io.OutputStream;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.time.temporal.WeekFields;
@@ -33,6 +33,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -46,6 +47,7 @@ public class RecognitionController {
     private final RecognitionCsvExporter csvExporter;
     private final AIInsightsService insightsService;
     private final ChartService chartService;
+    private final FileStorageService fileStorageService;
 
     private static final Logger log = LoggerFactory.getLogger(RecognitionController.class);
 
@@ -54,13 +56,15 @@ public class RecognitionController {
                                  EmployeeRepository employeeRepository,
                                  RecognitionCsvExporter csvExporter,
                                  AIInsightsService insightsService,
-                                 ChartService chartService) {
+                                 ChartService chartService,
+                                 FileStorageService fileStorageService) {
         this.recognitionRepository = recognitionRepository;
         this.recognitionTypeRepository = recognitionTypeRepository;
         this.employeeRepository = employeeRepository;
         this.csvExporter = csvExporter;
         this.insightsService = insightsService;
         this.chartService = chartService;
+        this.fileStorageService = fileStorageService;
     }
 
     @GetMapping
@@ -120,7 +124,7 @@ public class RecognitionController {
         }
     }
 
-    @GetMapping("/{id}")
+    @GetMapping("/{id:\\d+}")
     public ResponseEntity<?> getById(@PathVariable Long id) {
         Optional<Recognition> r = recognitionRepository.findByIdWithRelations(id);
         return r.map(rec -> ResponseEntity.ok(EntityMapper.toRecognitionResponse(rec))).orElseGet(() -> ResponseEntity.notFound().build());
@@ -193,10 +197,26 @@ public class RecognitionController {
     }
 
     @GetMapping("/export.csv")
-    public ResponseEntity<byte[]> exportCsv(@RequestParam(required = false) Long recipientId) throws Exception {
+    public ResponseEntity<byte[]> exportCsv(@RequestParam(required = false) Long recipientId,
+                                             @RequestParam(required = false) Long senderId,
+                                             @RequestParam(required = false) String role,
+                                             @RequestParam(required = false) Long managerId,
+                                             @RequestParam(required = false) Long days) throws Exception {
         List<Recognition> list;
-        if (recipientId != null) list = recognitionRepository.findAllByRecipientId(recipientId, Pageable.unpaged()).getContent();
-        else list = recognitionRepository.findAllWithRelations(Pageable.unpaged()).getContent();
+        boolean applyWindow = (role != null) || (managerId != null) || (days != null);
+        if (applyWindow) {
+            long effectiveDays = (days == null || days <= 0) ? 30 : days;
+            Instant to = Instant.now();
+            Instant from = to.minus(effectiveDays, ChronoUnit.DAYS);
+            list = recognitionRepository.findAllBetweenWithRelations(from, to);
+        } else {
+            list = recognitionRepository.findAllWithRelations(Pageable.unpaged()).getContent();
+        }
+        // apply entity filters
+        if (recipientId != null) list = list.stream().filter(r -> recipientId.equals(r.getRecipientId())).toList();
+        if (senderId != null) list = list.stream().filter(r -> senderId.equals(r.getSenderId())).toList();
+        if (role != null && !role.isBlank()) list = list.stream().filter(r -> r.getRecipient() != null && role.equalsIgnoreCase(r.getRecipient().getRole())).toList();
+        if (managerId != null) list = list.stream().filter(r -> r.getRecipient() != null && managerId.equals(r.getRecipient().getManagerId())).toList();
         byte[] bytes = csvExporter.export(list);
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=recognitions.csv")
@@ -205,169 +225,330 @@ public class RecognitionController {
     }
 
     @GetMapping("/export.json")
-    public ResponseEntity<List<RecognitionResponse>> exportJson(@RequestParam(required = false) Long recipientId) {
+    public ResponseEntity<List<RecognitionResponse>> exportJson(@RequestParam(required = false) Long recipientId,
+                                                                 @RequestParam(required = false) Long senderId,
+                                                                 @RequestParam(required = false) String role,
+                                                                 @RequestParam(required = false) Long managerId,
+                                                                 @RequestParam(required = false) Long days) {
         List<Recognition> list;
-        if (recipientId != null) list = recognitionRepository.findAllByRecipientId(recipientId, Pageable.unpaged()).getContent();
-        else list = recognitionRepository.findAllWithRelations(Pageable.unpaged()).getContent();
+        boolean applyWindow = (role != null) || (managerId != null) || (days != null);
+        if (applyWindow) {
+            long effectiveDays = (days == null || days <= 0) ? 30 : days;
+            Instant to = Instant.now();
+            Instant from = to.minus(effectiveDays, ChronoUnit.DAYS);
+            list = recognitionRepository.findAllBetweenWithRelations(from, to);
+        } else {
+            list = recognitionRepository.findAllWithRelations(Pageable.unpaged()).getContent();
+        }
+        if (recipientId != null) list = list.stream().filter(r -> recipientId.equals(r.getRecipientId())).toList();
+        if (senderId != null) list = list.stream().filter(r -> senderId.equals(r.getSenderId())).toList();
+        if (role != null && !role.isBlank()) list = list.stream().filter(r -> r.getRecipient() != null && role.equalsIgnoreCase(r.getRecipient().getRole())).toList();
+        if (managerId != null) list = list.stream().filter(r -> r.getRecipient() != null && managerId.equals(r.getRecipient().getManagerId())).toList();
         List<RecognitionResponse> resp = list.stream().map(EntityMapper::toRecognitionResponse).collect(Collectors.toList());
         return ResponseEntity.ok(resp);
     }
 
-    @GetMapping(value = "/export-stream.csv")
-    public ResponseEntity<StreamingResponseBody> exportStreamCsv(@RequestParam(required = false) Long recipientId) throws Exception {
-        List<Recognition> list;
-        if (recipientId != null) list = recognitionRepository.findAllByRecipientId(recipientId, Pageable.unpaged()).getContent();
-        else list = recognitionRepository.findAllWithRelations(Pageable.unpaged()).getContent();
 
-        StreamingResponseBody stream = (OutputStream os) -> {
-            try {
-                csvExporter.exportToStream(os, list);
-            } catch (Exception ex) {
-                throw new RuntimeException(ex);
-            }
-        };
-
-        return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=recognitions-stream.csv")
-                .contentType(MediaType.parseMediaType("text/csv"))
-                .body(stream);
-    }
-
+    // Deprecated / moved endpoints: redirect to canonical endpoints under /insights or /recognitions/export.csv
+    @Deprecated
     @GetMapping("/insights")
-    public Map<String, Object> insights(@RequestParam(required = false) Long days) {
-        long effectiveDays = (days == null || days <= 0) ? 30 : days;
-        Instant to = Instant.now();
-        Instant from = to.minus(effectiveDays, ChronoUnit.DAYS);
-        return insightsService.generateInsights(from, to);
+    public ResponseEntity<Void> deprecatedInsightsRedirect(@RequestParam(required = false) Long days) {
+        String url = "/insights" + (days == null ? "" : "?days=" + days);
+        return ResponseEntity.status(301).header(HttpHeaders.LOCATION, url).build();
     }
 
+    @Deprecated
     @GetMapping(value = "/graph.png", produces = MediaType.IMAGE_PNG_VALUE)
-    public ResponseEntity<byte[]> graph(@RequestParam(required = false) Long days) throws Exception {
-        long effectiveDays = (days == null || days <= 0) ? 30 : days;
-        Instant to = Instant.now();
-        Instant from = to.minus(effectiveDays, ChronoUnit.DAYS);
-        Map<String, Object> insights = insightsService.generateInsights(from, to);
-        @SuppressWarnings("unchecked")
-        Map<String, Integer> series = (Map<String, Integer>) insights.get("timeSeriesByDay");
-        byte[] png = chartService.renderTimeSeriesChart(series, "Recognitions over time", "day", "count");
-        return ResponseEntity.ok().contentType(MediaType.IMAGE_PNG).body(png);
+    public ResponseEntity<Void> deprecatedGraphRedirect(@RequestParam(required = false) Long days) {
+        String url = "/insights/graph.png" + (days == null ? "" : "?days=" + days);
+        return ResponseEntity.status(301).header(HttpHeaders.LOCATION, url).build();
     }
 
-    // New endpoints: role-based insights and exports
+    @Deprecated
     @GetMapping("/insights/role")
-    public Map<String, Object> insightsByRole(@RequestParam String role, @RequestParam(required = false) Long days) {
-        long effectiveDays = (days == null || days <= 0) ? 30 : days;
-        Instant to = Instant.now();
-        Instant from = to.minus(effectiveDays, ChronoUnit.DAYS);
-        return insightsService.generateInsightsForRole(role, from, to);
+    public ResponseEntity<Void> deprecatedInsightsRoleRedirect(@RequestParam String role, @RequestParam(required = false) Long days) {
+        String url = "/insights/role?role=" + role + (days == null ? "" : "&days=" + days);
+        return ResponseEntity.status(301).header(HttpHeaders.LOCATION, url).build();
     }
 
+    @Deprecated
     @GetMapping(value = "/insights/role/graph.png", produces = MediaType.IMAGE_PNG_VALUE)
-    public ResponseEntity<byte[]> graphByRole(@RequestParam String role, @RequestParam(required = false) Long days) throws Exception {
-        long effectiveDays = (days == null || days <= 0) ? 30 : days;
-        Instant to = Instant.now();
-        Instant from = to.minus(effectiveDays, ChronoUnit.DAYS);
-        Map<String, Object> insights = insightsService.generateInsightsForRole(role, from, to);
-        @SuppressWarnings("unchecked")
-        Map<String, Integer> series = (Map<String, Integer>) insights.get("timeSeriesByDay");
-        byte[] png = chartService.renderTimeSeriesChart(series, "Recognitions (" + role + ")", "day", "count");
-        return ResponseEntity.ok().contentType(MediaType.IMAGE_PNG).body(png);
+    public ResponseEntity<Void> deprecatedGraphByRoleRedirect(@RequestParam String role, @RequestParam(required = false) Long days) {
+        String url = "/insights/role/graph.png?role=" + role + (days == null ? "" : "&days=" + days);
+        return ResponseEntity.status(301).header(HttpHeaders.LOCATION, url).build();
     }
 
+    @Deprecated
     @GetMapping("/export-role.csv")
-    public ResponseEntity<byte[]> exportCsvByRole(@RequestParam String role, @RequestParam(required = false) Long days) throws Exception {
-        long effectiveDays = (days == null || days <= 0) ? 30 : days;
-        Instant to = Instant.now();
-        Instant from = to.minus(effectiveDays, ChronoUnit.DAYS);
-        List<Recognition> list = recognitionRepository.findAllBetween(from, to).stream().filter(r -> {
-            if (r.getRecipient() == null) return false;
-            return role.equalsIgnoreCase(r.getRecipient().getRole());
-        }).toList();
-        byte[] bytes = csvExporter.export(list);
-        return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=recognitions-" + role + ".csv")
-                .contentType(MediaType.parseMediaType("text/csv"))
-                .body(bytes);
+    public ResponseEntity<Void> deprecatedExportRoleRedirect(@RequestParam String role, @RequestParam(required = false) Long days) {
+        String url = "/recognitions/export.csv?role=" + role + (days == null ? "" : "&days=" + days);
+        return ResponseEntity.status(301).header(HttpHeaders.LOCATION, url).build();
     }
 
-    // Manager scoped insights
+    @Deprecated
     @GetMapping("/insights/manager/{managerId}")
-    public Map<String, Object> insightsByManager(@PathVariable Long managerId, @RequestParam(required = false) Long days) {
-        long effectiveDays = (days == null || days <= 0) ? 30 : days;
-        Instant to = Instant.now();
-        Instant from = to.minus(effectiveDays, ChronoUnit.DAYS);
-        return insightsService.generateInsightsForManager(managerId, from, to);
+    public ResponseEntity<Void> deprecatedInsightsManagerRedirect(@PathVariable Long managerId, @RequestParam(required = false) Long days) {
+        String url = "/insights/manager/" + managerId + (days == null ? "" : "?days=" + days);
+        return ResponseEntity.status(301).header(HttpHeaders.LOCATION, url).build();
     }
 
+    @Deprecated
     @GetMapping(value = "/insights/manager/{managerId}/graph.png", produces = MediaType.IMAGE_PNG_VALUE)
-    public ResponseEntity<byte[]> graphByManager(@PathVariable Long managerId, @RequestParam(required = false) Long days) throws Exception {
-        long effectiveDays = (days == null || days <= 0) ? 30 : days;
-        Instant to = Instant.now();
-        Instant from = to.minus(effectiveDays, ChronoUnit.DAYS);
-        Map<String, Object> insights = insightsService.generateInsightsForManager(managerId, from, to);
-        @SuppressWarnings("unchecked")
-        Map<String, Integer> series = (Map<String, Integer>) insights.get("timeSeriesByDay");
-        byte[] png = chartService.renderTimeSeriesChart(series, "Recognitions (manager:" + managerId + ")", "day", "count");
-        return ResponseEntity.ok().contentType(MediaType.IMAGE_PNG).body(png);
+    public ResponseEntity<Void> deprecatedGraphByManagerRedirect(@PathVariable Long managerId, @RequestParam(required = false) Long days) {
+        String url = "/insights/manager/" + managerId + "/graph.png" + (days == null ? "" : "?days=" + days);
+        return ResponseEntity.status(301).header(HttpHeaders.LOCATION, url).build();
     }
 
+    @Deprecated
     @GetMapping("/export-manager/{managerId}.csv")
-    public ResponseEntity<byte[]> exportCsvByManager(@PathVariable Long managerId, @RequestParam(required = false) Long days) throws Exception {
-        long effectiveDays = (days == null || days <= 0) ? 30 : days;
-        Instant to = Instant.now();
-        Instant from = to.minus(effectiveDays, ChronoUnit.DAYS);
-        // find direct reports
-        List<Long> reports = recognitionRepository.findAll().stream().filter(r -> r.getRecipient() != null && managerId.equals(r.getRecipient().getManagerId())).map(r -> r.getRecipientId()).distinct().toList();
-        List<Recognition> list = recognitionRepository.findAllBetween(from, to).stream().filter(r -> reports.contains(r.getRecipientId())).toList();
-        byte[] bytes = csvExporter.export(list);
-        return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=recognitions-manager-" + managerId + ".csv")
-                .contentType(MediaType.parseMediaType("text/csv"))
-                .body(bytes);
+    public ResponseEntity<Void> deprecatedExportManagerRedirect(@PathVariable Long managerId, @RequestParam(required = false) Long days) {
+        String url = "/recognitions/export.csv?managerId=" + managerId + (days == null ? "" : "&days=" + days);
+        return ResponseEntity.status(301).header(HttpHeaders.LOCATION, url).build();
     }
 
-    @GetMapping(value = "/graph-advanced.png", produces = {MediaType.IMAGE_PNG_VALUE, MediaType.APPLICATION_JSON_VALUE})
+    @GetMapping(value = {"/graph/advanced.png", "/graph/advanced"}, produces = {MediaType.IMAGE_PNG_VALUE, MediaType.APPLICATION_JSON_VALUE})
     public ResponseEntity<byte[]> graphAdvanced(@RequestParam(defaultValue = "daily") String series,
-                                                @RequestParam(required = false) String role,
-                                                @RequestParam(required = false) Long managerId,
-                                                @RequestParam(required = false) Long days,
-                                                @RequestParam(required = false, defaultValue = "png") String format) throws Exception {
-        try {
-            String normalized = series == null ? "daily" : series.toLowerCase(Locale.ROOT);
-            if ("weakly".equals(normalized)) normalized = "weekly"; // alias
-            java.util.Set<String> allowed = java.util.Set.of("daily","weekly","monthly","quarterly","yearly");
-            if (!allowed.contains(normalized)) {
-                return ResponseEntity.badRequest().body(("Unsupported series: " + series + ". Allowed: " + allowed).getBytes());
-            }
-            Instant to = Instant.now();
-            Instant from;
-            // Clamp user-specified days to prevent unbounded scans (per granularity sensible maximum)
-            java.util.Map<String, Long> maxDays = java.util.Map.of(
-                    "daily", 400L,          // ~13 months
-                    "weekly", 3L * 365L,     // ~3 years
-                    "monthly", 7L * 365L,    // ~7 years
-                    "quarterly", 7L * 365L,  // treat similar to monthly for raw scans
-                    "yearly", 12L * 365L     // cap ~12 years
-            );
-            boolean truncated = false;
-            if (days != null && days > 0) {
-                long requested = days;
-                long cap = maxDays.getOrDefault(normalized, 365L);
-                if (requested > cap) {
-                    truncated = true;
-                    requested = cap;
+                                                 @RequestParam(required = false) String role,
+                                                 @RequestParam(required = false) Long managerId,
+                                                 @RequestParam(required = false) Long days,
+                                                 @RequestParam(required = false) Integer buckets,
+                                                 @RequestParam(required = false) String iterations,
+                                                 @RequestParam(required = false) String iteration,
+                                                 @RequestParam(required = false, defaultValue = "png") String format,
+                                                 HttpServletRequest request) throws Exception {
+         try {
+             String rawSeries = series == null ? "daily" : series;
+             java.util.List<String> tokens = java.util.Arrays.stream(rawSeries.split(","))
+                     .map(t -> t.trim().toLowerCase(Locale.ROOT))
+                     .map(t -> "weakly".equals(t) ? "weekly" : t)
+                     .filter(t -> !t.isEmpty())
+                     .collect(Collectors.toList());
+             java.util.Set<String> allowed = java.util.Set.of("daily","weekly","monthly","quarterly","yearly");
+             // validate tokens: they must all be one of the allowed granularities
+             for (String tok : tokens) {
+                 if (!allowed.contains(tok)) {
+                     return ResponseEntity.badRequest().body(("Unsupported series token: " + tok + ". Allowed: " + allowed).getBytes());
+                 }
+             }
+             boolean multiGranularity = tokens.size() > 1;
+             String normalized = tokens.get(0); // primary granularity for single-mode PNG
+
+             Instant to = Instant.now();
+             Instant from;
+             // Clamp user-specified ranges to prevent unbounded scans (per granularity sensible maximum)
+             java.util.Map<String, Long> maxDays = java.util.Map.of(
+                     "daily", 400L,          // ~13 months
+                     "weekly", 3L * 365L,     // ~3 years
+                     "monthly", 7L * 365L,    // ~7 years
+                     "quarterly", 7L * 365L,  // treat similar to monthly for raw scans
+                     "yearly", 12L * 365L     // cap ~12 years
+             );
+             boolean truncated = false;
+
+             // parse 'iterations' like '3months', '5quarters' — precedence: iterations > buckets > days
+             // Support singular 'iteration' param too: prefer 'iterations' if present, else 'iteration'
+             if ((iterations == null || iterations.isBlank()) && iteration != null && !iteration.isBlank()) {
+                iterations = iteration;
+             }
+             // Fallback: read raw request param names (in case binding missed 'iteration')
+             if ((iterations == null || iterations.isBlank()) && request != null) {
+                 String raw = request.getParameter("iteration");
+                 if (raw == null || raw.isBlank()) raw = request.getParameter("iter");
+                 if (raw != null && !raw.isBlank()) iterations = raw;
+             }
+
+             if (iterations != null && !iterations.isBlank()) {
+               // Normalize: remove weird trailing chars (e.g., '2;;') and non-alphanumeric except space
+               String itRaw = iterations.trim().replaceAll("[;]+$", "").replaceAll("[^A-Za-z0-9 ]", "");
+               // Accept bare numeric values as 'buckets' in the requested granularity
+               if (itRaw.matches("^\\d+$")) {
+                   int qty = Integer.parseInt(itRaw);
+                   String unitKey = switch (normalized) {
+                       case "daily" -> "d";
+                       case "weekly" -> "w";
+                       case "monthly" -> "m";
+                       case "quarterly" -> "q";
+                       case "yearly" -> "y";
+                       default -> "d";
+                   };
+                   long daysEquivalent = switch (unitKey) {
+                       case "d" -> (long) qty;
+                       case "w" -> (long) qty * 7L;
+                       case "m" -> (long) qty * 30L;
+                       case "q" -> (long) qty * 90L;
+                       case "y" -> (long) qty * 365L;
+                       default -> (long) qty;
+                   };
+                   long cap = maxDays.getOrDefault(normalized, 365L);
+                   if (daysEquivalent > cap) {
+                       truncated = true;
+                       from = to.minus(cap, ChronoUnit.DAYS);
+                   } else {
+                       ZonedDateTime zto = ZonedDateTime.ofInstant(to, ZoneId.of("UTC"));
+                       // Compute start of the current bucket and then go back (qty-1) buckets so we return exactly qty buckets
+                       ZonedDateTime zfrom;
+                       switch (unitKey) {
+                           case "d": {
+                               ZonedDateTime startToday = zto.truncatedTo(ChronoUnit.DAYS);
+                               zfrom = startToday.minusDays(Math.max(0, qty - 1));
+                               break;
+                           }
+                           case "w": {
+                               WeekFields wf = WeekFields.ISO;
+                               java.time.LocalDate startOfWeek = zto.toLocalDate().with(wf.dayOfWeek(), 1);
+                               zfrom = startOfWeek.atStartOfDay(ZoneId.of("UTC")).minusWeeks(Math.max(0, qty - 1));
+                               break;
+                           }
+                           case "m": {
+                               ZonedDateTime startOfMonth = zto.withDayOfMonth(1).truncatedTo(ChronoUnit.DAYS);
+                               zfrom = startOfMonth.minusMonths(Math.max(0, qty - 1));
+                               break;
+                           }
+                           case "q": {
+                               int month = zto.getMonthValue();
+                               int startMonth = ((month - 1) / 3) * 3 + 1;
+                               ZonedDateTime startOfQuarter = zto.withMonth(startMonth).withDayOfMonth(1).truncatedTo(ChronoUnit.DAYS);
+                               zfrom = startOfQuarter.minusMonths(Math.max(0, (qty - 1) * 3L));
+                               break;
+                           }
+                           case "y": {
+                               ZonedDateTime startOfYear = zto.withDayOfYear(1).truncatedTo(ChronoUnit.DAYS);
+                               zfrom = startOfYear.minusYears(Math.max(0, qty - 1));
+                               break;
+                           }
+                           default: {
+                               ZonedDateTime startToday = zto.truncatedTo(ChronoUnit.DAYS);
+                               zfrom = startToday.minusDays(Math.max(0, qty - 1));
+                           }
+                       }
+                       from = zfrom.toInstant();
+                   }
+                } else {
+                   // Accept forms like: 3months, 3 months, 3M, 3mon, 5quarters, 10years, etc.
+                    java.util.regex.Pattern p = java.util.regex.Pattern.compile("^\\s*(\\d+)\\s*([A-Za-z]+)\\s*$");
+                    java.util.regex.Matcher m = p.matcher(itRaw);
+                    if (!m.matches()) {
+                        return ResponseEntity.badRequest().body(("Unsupported iterations format: " + iterations + ". Examples: 3months, 5quarters, 10years").getBytes());
+                    }
+                    int qty = Integer.parseInt(m.group(1));
+                    String rawUnit = m.group(2).toLowerCase(Locale.ROOT);
+                    // Map by prefix: d=days, w=weeks, m=months, q=quarters, y=years
+                    String unitKey;
+                    if (rawUnit.startsWith("d")) unitKey = "d";
+                    else if (rawUnit.startsWith("w")) unitKey = "w";
+                    else if (rawUnit.startsWith("q")) unitKey = "q";
+                    else if (rawUnit.startsWith("y")) unitKey = "y";
+                    else if (rawUnit.startsWith("m")) unitKey = "m"; // months
+                    else return ResponseEntity.badRequest().body(("Unsupported iterations unit: " + rawUnit + ". Use d/w/m/q/y or words like months/quarters/years").getBytes());
+
+                   long daysEquivalent = switch (unitKey) {
+                       case "d" -> (long) qty;
+                       case "w" -> (long) qty * 7L;
+                       case "m" -> (long) qty * 30L;
+                       case "q" -> (long) qty * 90L;
+                       case "y" -> (long) qty * 365L;
+                       default -> (long) qty;
+                   };
+                   long cap = maxDays.getOrDefault(normalized, 365L);
+                   if (daysEquivalent > cap) {
+                       truncated = true;
+                       from = to.minus(cap, ChronoUnit.DAYS);
+                   } else {
+                       ZonedDateTime zto = ZonedDateTime.ofInstant(to, ZoneId.of("UTC"));
+                       // same logic as numeric branch: start of current bucket minus (qty-1) buckets
+                       ZonedDateTime zfrom;
+                       switch (unitKey) {
+                           case "d":
+                               zfrom = zto.truncatedTo(ChronoUnit.DAYS).minusDays(Math.max(0, qty - 1));
+                               break;
+                           case "w":
+                               WeekFields wf = WeekFields.ISO;
+                               java.time.LocalDate startOfWeek = zto.toLocalDate().with(wf.dayOfWeek(), 1);
+                               zfrom = startOfWeek.atStartOfDay(ZoneId.of("UTC")).minusWeeks(Math.max(0, qty - 1));
+                               break;
+                           case "m":
+                               zfrom = zto.withDayOfMonth(1).truncatedTo(ChronoUnit.DAYS).minusMonths(Math.max(0, qty - 1));
+                               break;
+                           case "q": {
+                               int month = zto.getMonthValue();
+                               int startMonth = ((month - 1) / 3) * 3 + 1;
+                               ZonedDateTime startOfQuarter = zto.withMonth(startMonth).withDayOfMonth(1).truncatedTo(ChronoUnit.DAYS);
+                               zfrom = startOfQuarter.minusMonths(Math.max(0, (qty - 1) * 3L));
+                               break;
+                           }
+                           case "y":
+                               zfrom = zto.withDayOfYear(1).truncatedTo(ChronoUnit.DAYS).minusYears(Math.max(0, qty - 1));
+                               break;
+                           default:
+                               zfrom = zto.truncatedTo(ChronoUnit.DAYS).minusDays(Math.max(0, qty - 1));
+                       }
+                       from = zfrom.toInstant();
+                   }
                 }
-                from = to.minus(requested, ChronoUnit.DAYS);
-            } else {
-                switch (normalized) {
-                    case "daily": from = to.minus(30, ChronoUnit.DAYS); break;
-                    case "weekly": from = to.minus(8 * 7L, ChronoUnit.DAYS); break; // ~8 weeks
-                    case "monthly": from = to.minus(12, ChronoUnit.MONTHS); break; // 12 months
-                    case "quarterly": from = to.minus(8 * 3L, ChronoUnit.MONTHS); break; // 8 quarters (~2y)
-                    case "yearly": from = to.minus(5, ChronoUnit.YEARS); break; // 5 years
-                    default: from = to.minus(30, ChronoUnit.DAYS);
-                }
-            }
+            } else if (buckets != null && buckets > 0) {
+                  // Preferred: compute 'from' using number of buckets in the requested granularity
+                  int b = buckets;
+                  // approximate days for cap comparison
+                 long daysEquivalent = switch (normalized) {
+                     case "daily" -> (long) b;
+                     case "weekly" -> (long) b * 7L;
+                     case "monthly" -> (long) b * 30L;
+                     case "quarterly" -> (long) b * 90L; // 3 months
+                     case "yearly" -> (long) b * 365L;
+                     default -> (long) b;
+                 };
+                 long cap = maxDays.getOrDefault(normalized, 365L);
+                 if (daysEquivalent > cap) {
+                     truncated = true;
+                     // fall back to days cap as an approximation
+                     from = to.minus(cap, ChronoUnit.DAYS);
+                 } else {
+                     ZonedDateTime zto = ZonedDateTime.ofInstant(to, ZoneId.of("UTC"));
+                     // compute start of current bucket then back (b-1) buckets to return exactly b buckets
+                     ZonedDateTime zfrom;
+                     switch (normalized) {
+                         case "daily": zfrom = zto.truncatedTo(ChronoUnit.DAYS).minusDays(Math.max(0, b - 1)); break;
+                         case "weekly": {
+                             WeekFields wf = WeekFields.ISO;
+                             java.time.LocalDate startOfWeek = zto.toLocalDate().with(wf.dayOfWeek(), 1);
+                             zfrom = startOfWeek.atStartOfDay(ZoneId.of("UTC")).minusWeeks(Math.max(0, b - 1));
+                             break;
+                         }
+                         case "monthly": zfrom = zto.withDayOfMonth(1).truncatedTo(ChronoUnit.DAYS).minusMonths(Math.max(0, b - 1)); break;
+                         case "quarterly": {
+                             int month = zto.getMonthValue();
+                             int startMonth = ((month - 1) / 3) * 3 + 1;
+                             ZonedDateTime startOfQuarter = zto.withMonth(startMonth).withDayOfMonth(1).truncatedTo(ChronoUnit.DAYS);
+                             zfrom = startOfQuarter.minusMonths(Math.max(0, (b - 1) * 3L));
+                             break;
+                         }
+                         case "yearly": zfrom = zto.withDayOfYear(1).truncatedTo(ChronoUnit.DAYS).minusYears(Math.max(0, b - 1)); break;
+                         default: zfrom = zto.truncatedTo(ChronoUnit.DAYS).minusDays(Math.max(0, b - 1));
+                     }
+                     from = zfrom.toInstant();
+                 }
+              } else if (days != null && days > 0) {
+                 long requested = days;
+                 long cap = maxDays.getOrDefault(normalized, 365L);
+                 if (requested > cap) {
+                     truncated = true;
+                     requested = cap;
+                 }
+                 from = to.minus(requested, ChronoUnit.DAYS);
+             } else {
+                 // Default timeframe per granularity
+                 ZonedDateTime zto = ZonedDateTime.ofInstant(to, ZoneId.of("UTC"));
+                 ZonedDateTime zfrom;
+                 switch (normalized) {
+                     case "daily": zfrom = zto.minusDays(30); break;
+                     case "weekly": zfrom = zto.minusWeeks(8); break; // ~8 weeks
+                     case "monthly": zfrom = zto.minusMonths(12); break; // 12 months
+                     case "quarterly": zfrom = zto.minusMonths(8 * 3L); break; // 8 quarters (~24 months)
+                     case "yearly": zfrom = zto.minusYears(5); break; // 5 years
+                     default: zfrom = zto.minusDays(30);
+                 }
+                 from = zfrom.toInstant();
+             }
 
             // Attempt optimized daily counts via native aggregation (recipient role/manager filters)
             java.util.Map<String,Integer> dailySeries = new java.util.LinkedHashMap<>();
@@ -408,14 +589,9 @@ public class RecognitionController {
 
             // Gap fill daily series so downstream weekly/monthly etc. produce continuous buckets
             if (!dailySeries.isEmpty()) {
-                java.time.LocalDate start = java.time.LocalDate.parse(dailySeries.keySet().iterator().next());
-                java.time.LocalDate end = java.time.LocalDate.parse(dailySeries.keySet().stream().reduce((first, second) -> second).orElse(start.toString()));
-                // ensure coverage from computed 'from' instant, not only existing first key
                 java.time.LocalDate requestedStart = from.atZone(java.time.ZoneId.of("UTC")).toLocalDate();
-                if (requestedStart.isBefore(start)) start = requestedStart;
                 java.time.LocalDate requestedEnd = to.atZone(java.time.ZoneId.of("UTC")).toLocalDate();
-                if (requestedEnd.isAfter(end)) end = requestedEnd;
-                for (java.time.LocalDate d = start; !d.isAfter(end); d = d.plusDays(1)) {
+                for (java.time.LocalDate d = requestedStart; !d.isAfter(requestedEnd); d = d.plusDays(1)) {
                     dailySeries.putIfAbsent(d.toString(), 0);
                 }
                 // Re-sort after gap fill
@@ -430,7 +606,8 @@ public class RecognitionController {
                 seriesMap.put(java.time.LocalDate.now().toString(), 0);
             }
 
-            if ("json".equalsIgnoreCase(format)) {
+            // Support JSON output for a single granularity (happy path)
+            if ("json".equalsIgnoreCase(format) && !multiGranularity) {
                 java.util.List<java.util.Map<String,Object>> data = new java.util.ArrayList<>();
                 for (Map.Entry<String,Integer> e : seriesMap.entrySet()) {
                     java.util.Map<String,Object> point = new java.util.LinkedHashMap<>();
@@ -446,10 +623,66 @@ public class RecognitionController {
                 body.put("points", data);
                 body.put("total", total);
                 String json = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(body);
+                ResponseEntity.BodyBuilder respBuilder = ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON);
+                if (truncated) respBuilder.header("X-Range-Truncated", "true");
+                return respBuilder.body(json.getBytes());
+            }
+
+            // If multiple granularities requested: JSON/CSV will return all; PNG is unsupported
+            if (multiGranularity && "png".equalsIgnoreCase(format)) {
+                String msg = "PNG output supports a single granularity. Request JSON or CSV for multiple series.";
+                return ResponseEntity.badRequest().body(msg.getBytes());
+            }
+
+            // Support CSV output for the advanced graph endpoint
+            if ("csv".equalsIgnoreCase(format)) {
+                StringBuilder sb = new StringBuilder();
+                if (multiGranularity) {
+                    sb.append("series,bucket,count\n");
+                    for (String tok : tokens) {
+                        Map<String, Integer> m = sanitizeSeries(aggregateSeries(dailySeries, tok));
+                        for (Map.Entry<String, Integer> e : m.entrySet()) {
+                            sb.append(tok).append(',').append(e.getKey()).append(',').append(e.getValue()).append('\n');
+                        }
+                    }
+                } else {
+                    sb.append("bucket,count\n");
+                    for (Map.Entry<String, Integer> e : seriesMap.entrySet()) {
+                        sb.append(e.getKey()).append(',').append(e.getValue()).append('\n');
+                    }
+                }
+                byte[] csvBytes = sb.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                ResponseEntity.BodyBuilder csvBuilder = ResponseEntity.ok().contentType(MediaType.parseMediaType("text/csv"))
+                        .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=recognitions-" + String.join("+", tokens) + ".csv");
+                if (truncated) csvBuilder.header("X-Range-Truncated", "true");
+                return csvBuilder.body(csvBytes);
+            }
+
+            // Support JSON output for multiple granularities
+            if ("json".equalsIgnoreCase(format) && multiGranularity) {
+                java.util.Map<String, Object> body = new java.util.LinkedHashMap<>();
+                body.put("series", tokens);
+                body.put("from", from.toString());
+                body.put("to", to.toString());
+                java.util.Map<String, java.util.List<java.util.Map<String,Object>>> data = new java.util.LinkedHashMap<>();
+                for (String tok : tokens) {
+                    Map<String, Integer> m = sanitizeSeries(aggregateSeries(dailySeries, tok));
+                    java.util.List<java.util.Map<String,Object>> pts = new java.util.ArrayList<>();
+                    for (Map.Entry<String,Integer> e : m.entrySet()) {
+                        java.util.Map<String,Object> point = new java.util.LinkedHashMap<>();
+                        point.put("bucket", e.getKey());
+                        point.put("count", e.getValue());
+                        pts.add(point);
+                    }
+                    data.put(tok, pts);
+                }
+                body.put("data", data);
+                String json = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(body);
                 ResponseEntity.BodyBuilder builder = ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON);
                 if (truncated) builder.header("X-Range-Truncated", "true");
                 return builder.body(json.getBytes());
             }
+
             String xLabel = switch (normalized) {
                 case "daily" -> "day";
                 case "weekly" -> "week";
@@ -461,6 +694,10 @@ public class RecognitionController {
             byte[] png = chartService.renderTimeSeriesChart(seriesMap, "Recognitions (" + normalized + ")", xLabel, "count");
             ResponseEntity.BodyBuilder builder = ResponseEntity.ok().contentType(MediaType.IMAGE_PNG);
             if (truncated) builder.header("X-Range-Truncated", "true");
+            // store advanced graph
+            String ts = fileStorageService.nowTimestamp();
+            String filename = "graph_advanced_" + normalized + "_" + from.toString().replace(':','-') + "_to_" + to.toString().replace(':','-') + "_" + ts + ".png";
+            fileStorageService.storeGraph(filename, png);
             return builder.body(png);
         } catch (Exception ex) {
             String json = "{\"status\":500,\"error\":\"GRAPH_ERROR\",\"message\":\"" + ex.getClass().getSimpleName() + ": " + ex.getMessage() + "\"}";
@@ -479,46 +716,4 @@ public class RecognitionController {
     }
 
     // Helper to aggregate daily counts into requested granularity
-    private Map<String, Integer> aggregateSeries(Map<String, Integer> daily, String series) {
-        if (daily == null) return java.util.Collections.emptyMap();
-        String s = series.toLowerCase(Locale.ROOT);
-        if ("daily".equals(s)) return daily; // already daily
-        java.util.Map<String, Integer> out = new java.util.LinkedHashMap<>();
-        WeekFields wf = WeekFields.ISO;
-        DateTimeFormatter monthFmt = DateTimeFormatter.ofPattern("yyyy-MM");
-        for (Map.Entry<String, Integer> e : daily.entrySet()) {
-            try {
-                LocalDate d = LocalDate.parse(e.getKey());
-                String bucket;
-                switch (s) {
-                    case "weekly": {
-                        int week = d.get(wf.weekOfWeekBasedYear());
-                        bucket = d.getYear() + "-W" + String.format("%02d", week);
-                        break;
-                    }
-                    case "monthly": {
-                        bucket = d.format(monthFmt); // yyyy-MM
-                        break;
-                    }
-                    case "quarterly": {
-                        int q = (d.getMonthValue() - 1) / 3 + 1;
-                        bucket = d.getYear() + "-Q" + q;
-                        break;
-                    }
-                    case "yearly": {
-                        bucket = String.valueOf(d.getYear());
-                        break;
-                    }
-                    default: {
-                        // unsupported series -> return daily unmodified
-                        return daily;
-                    }
-                }
-                out.put(bucket, out.getOrDefault(bucket, 0) + e.getValue());
-            } catch (Exception ex) {
-                // skip malformed date keys
-            }
-        }
-        return out;
-    }
-}
+    private Map<String, Integer> aggregateSeries(Map<String, Integer> daily,
