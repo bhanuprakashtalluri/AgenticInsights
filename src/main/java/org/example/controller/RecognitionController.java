@@ -3,14 +3,13 @@ package org.example.controller;
 import org.example.dto.RecognitionResponse;
 import org.example.dto.RecognitionCreateRequest;
 import org.example.model.Recognition;
-import org.example.model.RecognitionType;
 import org.example.repository.EmployeeRepository;
 import org.example.repository.RecognitionRepository;
 import org.example.repository.RecognitionTypeRepository;
-import org.example.service.AIInsightsService;
+import org.example.service.RecognitionCsvExporter;
+import org.example.service.RecognitionToonExporter;
 import org.example.service.ChartService;
 import org.example.service.FileStorageService;
-import org.example.service.RecognitionCsvExporter;
 import org.example.util.EntityMapper;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -20,85 +19,64 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.time.Instant;
-import java.time.LocalDate;
-import java.time.ZoneId;
-import java.time.ZonedDateTime;
+import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
-import java.time.temporal.WeekFields;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
-import jakarta.servlet.http.HttpServletRequest;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 @RestController
 @RequestMapping("/recognitions")
 public class RecognitionController {
-
     private final RecognitionRepository recognitionRepository;
     private final RecognitionTypeRepository recognitionTypeRepository;
     private final EmployeeRepository employeeRepository;
     private final RecognitionCsvExporter csvExporter;
-    private final AIInsightsService insightsService;
+    private final RecognitionToonExporter toonExporter;
     private final ChartService chartService;
     private final FileStorageService fileStorageService;
 
-    private static final Logger log = LoggerFactory.getLogger(RecognitionController.class);
+    private static final String CSV_DIR = "artifacts/exports/csv/";
+    private static final String JSON_DIR = "artifacts/exports/json/";
+    private static final String GRAPHS_DIR = "artifacts/graphs/";
+    private static String timestampedName(String base, String ext) {
+        DateTimeFormatter fmt = DateTimeFormatter.ofPattern("dd-MM-yyyy-HH.mm");
+        String ts = LocalDateTime.now().format(fmt);
+        return base + "-" + ts + (ext != null ? "." + ext : "");
+    }
 
     public RecognitionController(RecognitionRepository recognitionRepository,
                                  RecognitionTypeRepository recognitionTypeRepository,
                                  EmployeeRepository employeeRepository,
                                  RecognitionCsvExporter csvExporter,
-                                 AIInsightsService insightsService,
+                                 RecognitionToonExporter toonExporter,
                                  ChartService chartService,
                                  FileStorageService fileStorageService) {
         this.recognitionRepository = recognitionRepository;
         this.recognitionTypeRepository = recognitionTypeRepository;
         this.employeeRepository = employeeRepository;
         this.csvExporter = csvExporter;
-        this.insightsService = insightsService;
+        this.toonExporter = toonExporter;
         this.chartService = chartService;
         this.fileStorageService = fileStorageService;
     }
 
-    @GetMapping
-    public Page<RecognitionResponse> list(@RequestParam(defaultValue = "0") int page,
-                                  @RequestParam(defaultValue = "20") int size,
-                                  @RequestParam(required = false) Long recipientId,
-                                  @RequestParam(required = false) Long senderId,
-                                  @RequestParam(required = false) java.util.UUID recipientUuid,
-                                  @RequestParam(required = false) java.util.UUID senderUuid) {
-        Pageable p = PageRequest.of(page, size);
-        Page<Recognition> pageResult;
-        // prefer UUID resolution if provided
-        if (recipientUuid != null) {
-            pageResult = employeeRepository.findByUuid(recipientUuid).map(e -> recognitionRepository.findAllByRecipientId(e.getId(), p)).orElseGet(() -> recognitionRepository.findAllWithRelations(Pageable.unpaged()));
-        } else if (senderUuid != null) {
-            pageResult = employeeRepository.findByUuid(senderUuid).map(e -> recognitionRepository.findAllBySenderId(e.getId(), p)).orElseGet(() -> recognitionRepository.findAllWithRelations(Pageable.unpaged()));
-        } else if (recipientId != null) pageResult = recognitionRepository.findAllByRecipientId(recipientId, p);
-        else if (senderId != null) pageResult = recognitionRepository.findAllBySenderId(senderId, p);
-         else pageResult = recognitionRepository.findAllWithRelations(p);
-         return pageResult.map(EntityMapper::toRecognitionResponse);
-     }
-
+    // --- CRUD ---
     @PostMapping
     public ResponseEntity<?> create(@RequestBody RecognitionCreateRequest req) {
         try {
             Recognition r = new Recognition();
             if (req.recognitionTypeId != null) {
-                Optional<RecognitionType> rt = recognitionTypeRepository.findById(req.recognitionTypeId);
-                rt.ifPresent(r::setRecognitionType);
+                recognitionTypeRepository.findById(req.recognitionTypeId).ifPresent(r::setRecognitionType);
             } else if (req.recognitionTypeUuid != null) {
-                Optional<RecognitionType> rt = recognitionTypeRepository.findByUuid(req.recognitionTypeUuid);
-                rt.ifPresent(r::setRecognitionType);
+                recognitionTypeRepository.findByUuid(req.recognitionTypeUuid).ifPresent(r::setRecognitionType);
             }
-            // resolve recipient
             if (req.recipientId != null) {
                 employeeRepository.findById(req.recipientId).ifPresent(r::setRecipient);
             } else if (req.recipientUuid != null) {
@@ -109,14 +87,13 @@ public class RecognitionController {
             } else if (req.senderUuid != null) {
                 employeeRepository.findByUuid(req.senderUuid).ifPresent(r::setSender);
             }
-            r.setAwardName(req.awardName);
+            r.setCategory(req.category);
             r.setLevel(req.level);
             r.setMessage(req.message);
             r.setAwardPoints(req.awardPoints == null ? 0 : req.awardPoints);
             if (req.sentAt != null) r.setSentAt(Instant.parse(req.sentAt));
-            r.setApprovalStatus("PENDING");
+            r.setApprovalStatus("PENDING"); // always uppercase
             Recognition saved = recognitionRepository.save(r);
-            // reload with relations to map
             Recognition reloaded = recognitionRepository.findByIdWithRelations(saved.getId()).orElse(saved);
             return ResponseEntity.status(201).body(EntityMapper.toRecognitionResponse(reloaded));
         } catch (Exception e) {
@@ -124,61 +101,125 @@ public class RecognitionController {
         }
     }
 
-    @GetMapping("/{id:\\d+}")
-    public ResponseEntity<?> getById(@PathVariable Long id) {
-        Optional<Recognition> r = recognitionRepository.findByIdWithRelations(id);
-        return r.map(rec -> ResponseEntity.ok(EntityMapper.toRecognitionResponse(rec))).orElseGet(() -> ResponseEntity.notFound().build());
+    @GetMapping
+    public Page<RecognitionResponse> list(@RequestParam(defaultValue = "0") int page,
+                                  @RequestParam(defaultValue = "20") int size,
+                                  @RequestParam(required = false) Long recipientId,
+                                  @RequestParam(required = false) Long senderId,
+                                  @RequestParam(required = false) UUID recipientUuid,
+                                  @RequestParam(required = false) UUID senderUuid) {
+        Pageable p = PageRequest.of(page, size);
+        Page<Recognition> pageResult;
+        if (recipientUuid != null) {
+            pageResult = employeeRepository.findByUuid(recipientUuid).map(e -> recognitionRepository.findAllByRecipientId(e.getId(), p)).orElseGet(() -> recognitionRepository.findAllWithRelations(Pageable.unpaged()));
+        } else if (senderUuid != null) {
+            pageResult = employeeRepository.findByUuid(senderUuid).map(e -> recognitionRepository.findAllBySenderId(e.getId(), p)).orElseGet(() -> recognitionRepository.findAllWithRelations(Pageable.unpaged()));
+        } else if (recipientId != null) pageResult = recognitionRepository.findAllByRecipientId(recipientId, p);
+        else if (senderId != null) pageResult = recognitionRepository.findAllBySenderId(senderId, p);
+        else pageResult = recognitionRepository.findAllWithRelations(p);
+        return pageResult.map(EntityMapper::toRecognitionResponse);
     }
 
-    @GetMapping("/uuid/{uuid}")
-    public ResponseEntity<?> getByUuid(@PathVariable UUID uuid) {
-        Optional<Recognition> r = recognitionRepository.findByUuidWithRelations(uuid);
-        return r.map(rec -> ResponseEntity.ok(EntityMapper.toRecognitionResponse(rec))).orElseGet(() -> ResponseEntity.notFound().build());
+    // Unified get by ID or UUID (as request parameters)
+    @GetMapping("/single")
+    public ResponseEntity<?> getByIdOrUuid(@RequestParam(required = false) Long id, @RequestParam(required = false) UUID uuid) {
+        Optional<Recognition> opt = Optional.empty();
+        if (id != null) opt = recognitionRepository.findByIdWithRelations(id);
+        else if (uuid != null) opt = recognitionRepository.findByUuidWithRelations(uuid);
+        if (opt.isEmpty()) return ResponseEntity.notFound().build();
+        return ResponseEntity.ok(EntityMapper.toRecognitionResponse(opt.get()));
     }
 
-    @PutMapping("/{id}")
-    public ResponseEntity<?> update(@PathVariable Long id, @RequestBody org.example.dto.RecognitionUpdateRequest req) {
-        Optional<Recognition> opt = recognitionRepository.findByIdWithRelations(id);
+    // Unified update by ID or UUID (as request parameters)
+    @PutMapping("/single")
+    public ResponseEntity<?> update(@RequestParam(required = false) Long id, @RequestParam(required = false) UUID uuid, @RequestBody Recognition req) {
+        Optional<Recognition> opt = Optional.empty();
+        if (id != null) opt = recognitionRepository.findByIdWithRelations(id);
+        else if (uuid != null) opt = recognitionRepository.findByUuidWithRelations(uuid);
         if (opt.isEmpty()) return ResponseEntity.notFound().build();
         Recognition r = opt.get();
-        if (req.awardName != null) r.setAwardName(req.awardName);
-        if (req.level != null) r.setLevel(req.level);
-        if (req.message != null) r.setMessage(req.message);
-        if (req.awardPoints != null) r.setAwardPoints(req.awardPoints);
-        if (req.approvalStatus != null) r.setApprovalStatus(req.approvalStatus);
-        if (req.rejectionReason != null) r.setRejectionReason(req.rejectionReason);
+        // Update fields
+        if (req.getCategory() != null) r.setCategory(req.getCategory());
+        if (req.getLevel() != null) r.setLevel(req.getLevel());
+        if (req.getMessage() != null) r.setMessage(req.getMessage());
+        if (req.getSentAt() != null) r.setSentAt(req.getSentAt());
+        if (req.getRecognitionType() != null) r.setRecognitionType(req.getRecognitionType());
+        // Points logic
+        String typeName = r.getRecognitionType() != null ? r.getRecognitionType().getTypeName() : null;
+        String level = r.getLevel();
+        if (typeName != null) {
+            if (typeName.equalsIgnoreCase("ecard")) {
+                r.setAwardPoints(0);
+            } else if (typeName.equalsIgnoreCase("ecard_with_points")) {
+                Integer pts = req.getAwardPoints();
+                if (pts != null && (pts == 5 || pts == 10)) {
+                    r.setAwardPoints(pts);
+                } else {
+                    r.setAwardPoints(5); // default to 5 if not valid
+                }
+            } else if (typeName.equalsIgnoreCase("award")) {
+                if (level != null) {
+                    switch (level.toLowerCase()) {
+                        case "bronze" -> r.setAwardPoints(20);
+                        case "silver" -> r.setAwardPoints(25);
+                        case "gold" -> r.setAwardPoints(30);
+                        default -> r.setAwardPoints(0);
+                    }
+                } else {
+                    r.setAwardPoints(0);
+                }
+            }
+        }
+        // Status and rejection reason logic
+        String prevStatus = r.getApprovalStatus();
+        String newStatus = req.getApprovalStatus();
+        if (newStatus != null) {
+            r.setApprovalStatus(newStatus);
+            if (!"REJECTED".equalsIgnoreCase(newStatus)) {
+                r.setRejectionReason(null); // clear reason if not rejected
+            } else {
+                r.setRejectionReason(req.getRejectionReason());
+            }
+        }
         recognitionRepository.save(r);
-        Recognition reloaded = recognitionRepository.findByIdWithRelations(r.getId()).orElse(r);
-        return ResponseEntity.ok(EntityMapper.toRecognitionResponse(reloaded));
+        return ResponseEntity.ok(EntityMapper.toRecognitionResponse(r));
     }
 
-    @PatchMapping("/{id}/approve")
-    public ResponseEntity<?> approve(@PathVariable Long id,
-                                     @RequestBody(required = false) org.example.dto.ApprovalRequest body,
-                                     @RequestParam(required = false) Long approverId) {
-        Optional<Recognition> opt = recognitionRepository.findByIdWithRelations(id);
+    // Unified delete by ID or UUID (as request parameters)
+    @DeleteMapping("/single")
+    public ResponseEntity<?> delete(@RequestParam(required = false) Long id, @RequestParam(required = false) UUID uuid) {
+        Optional<Recognition> opt = Optional.empty();
+        if (id != null) opt = recognitionRepository.findByIdWithRelations(id);
+        else if (uuid != null) opt = recognitionRepository.findByUuidWithRelations(uuid);
+        if (opt.isEmpty()) return ResponseEntity.notFound().build();
+        recognitionRepository.deleteById(opt.get().getId());
+        return ResponseEntity.noContent().build();
+    }
+
+    // Unified approve by ID or UUID (as request parameters)
+    @PatchMapping("/approve")
+    public ResponseEntity<?> approve(@RequestParam(required = false) Long id, @RequestParam(required = false) UUID uuid, @RequestBody(required = false) org.example.dto.ApprovalRequest body, @RequestParam(required = false) Long approverId) {
+        Optional<Recognition> opt = Optional.empty();
+        if (id != null) opt = recognitionRepository.findByIdWithRelations(id);
+        else if (uuid != null) opt = recognitionRepository.findByUuidWithRelations(uuid);
         if (opt.isEmpty()) return ResponseEntity.notFound().build();
         Recognition r = opt.get();
-        Long usedApprover = (body != null && body.approverId != null) ? body.approverId : approverId;
-        // (we don't currently store approver, just accept it)
         r.setApprovalStatus("APPROVED");
-        // clear any previous rejection reason when approving
         r.setRejectionReason(null);
         recognitionRepository.save(r);
         Recognition reloaded = recognitionRepository.findByIdWithRelations(r.getId()).orElse(r);
         return ResponseEntity.ok(EntityMapper.toRecognitionResponse(reloaded));
     }
 
-    @PatchMapping("/{id}/reject")
-    public ResponseEntity<?> reject(@PathVariable Long id,
-                                    @RequestBody(required = false) org.example.dto.ApprovalRequest body,
-                                    @RequestParam(required = false) String reason,
-                                    @RequestParam(required = false) Long approverId) {
-        Optional<Recognition> opt = recognitionRepository.findByIdWithRelations(id);
+    // Unified reject by ID or UUID (as request parameters)
+    @PatchMapping("/reject")
+    public ResponseEntity<?> reject(@RequestParam(required = false) Long id, @RequestParam(required = false) UUID uuid, @RequestBody(required = false) org.example.dto.ApprovalRequest body, @RequestParam(required = false) String reason, @RequestParam(required = false) Long approverId) {
+        Optional<Recognition> opt = Optional.empty();
+        if (id != null) opt = recognitionRepository.findByIdWithRelations(id);
+        else if (uuid != null) opt = recognitionRepository.findByUuidWithRelations(uuid);
         if (opt.isEmpty()) return ResponseEntity.notFound().build();
         Recognition r = opt.get();
         String usedReason = (body != null && body.reason != null) ? body.reason : reason;
-        Long usedApprover = (body != null && body.approverId != null) ? body.approverId : approverId;
         if (usedReason == null || usedReason.isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "reason is required to reject a recognition"));
         }
@@ -189,21 +230,61 @@ public class RecognitionController {
         return ResponseEntity.ok(EntityMapper.toRecognitionResponse(reloaded));
     }
 
-    @DeleteMapping("/{id}")
-    public ResponseEntity<?> delete(@PathVariable Long id) {
-        if (!recognitionRepository.existsById(id)) return ResponseEntity.notFound().build();
-        recognitionRepository.deleteById(id);
-        return ResponseEntity.noContent().build();
+    // --- Search ---
+    @GetMapping("/search")
+    public Page<RecognitionResponse> search(@RequestParam(required = false) Long id,
+                                            @RequestParam(required = false) UUID uuid,
+                                            @RequestParam(required = false) String name,
+                                            @RequestParam(required = false) Long unitId,
+                                            @RequestParam(required = false) Long typeId,
+                                            @RequestParam(required = false) Integer points,
+                                            @RequestParam(required = false) String role,
+                                            @RequestParam(required = false) String status,
+                                            @RequestParam(required = false) String category,
+                                            @RequestParam(defaultValue = "0") int page,
+                                            @RequestParam(defaultValue = "20") int size) {
+        Pageable p = PageRequest.of(page, size);
+        if (id != null) {
+            Optional<Recognition> rec = recognitionRepository.findById(id);
+            return rec.map(r -> new org.springframework.data.domain.PageImpl<>(List.of(EntityMapper.toRecognitionResponse(r)), p, 1))
+                    .orElseGet(() -> new org.springframework.data.domain.PageImpl<>(List.of(), p, 0));
+        } else if (uuid != null) {
+            Optional<Recognition> rec = recognitionRepository.findByUuid(uuid);
+            return rec.map(r -> new org.springframework.data.domain.PageImpl<>(List.of(EntityMapper.toRecognitionResponse(r)), p, 1))
+                    .orElseGet(() -> new org.springframework.data.domain.PageImpl<>(List.of(), p, 0));
+        }
+        List<Recognition> filtered = recognitionRepository.findAllWithRelations(Pageable.unpaged()).getContent();
+        if (name != null && !name.isBlank()) filtered = filtered.stream().filter(r -> r.getCategory() != null && r.getCategory().toLowerCase().contains(name.toLowerCase())).toList();
+        if (unitId != null && !isAll(unitId)) filtered = filtered.stream().filter(r -> r.getRecipient() != null && unitId.equals(r.getRecipient().getUnitId())).toList();
+        if (typeId != null && !isAll(typeId)) filtered = filtered.stream().filter(r -> r.getRecognitionType() != null && typeId.equals(r.getRecognitionType().getId())).toList();
+        if (points != null && !isAll(points)) filtered = filtered.stream().filter(r -> points.equals(r.getAwardPoints())).toList();
+        if (role != null && !role.isBlank() && !role.equalsIgnoreCase("all")) filtered = filtered.stream().filter(r -> r.getRecipient() != null && role.equalsIgnoreCase(r.getRecipient().getRole())).toList();
+        if (status != null && !status.isBlank() && !status.equalsIgnoreCase("all")) {
+            String statusNorm = status.trim().toUpperCase();
+            filtered = filtered.stream().filter(r -> {
+                String s = r.getApprovalStatus();
+                return s != null && statusNorm.equals(s.trim().toUpperCase());
+            }).toList();
+        }
+        if (category != null && !category.isBlank() && !category.equalsIgnoreCase("all")) {
+            String categoryNorm = category.trim().toLowerCase();
+            filtered = filtered.stream().filter(r -> r.getCategory() != null && r.getCategory().toLowerCase().contains(categoryNorm)).toList();
+        }
+        final List<Recognition> finalFiltered = filtered;
+        return finalFiltered.stream().skip((long) page * size).limit(size).map(EntityMapper::toRecognitionResponse).collect(Collectors.collectingAndThen(Collectors.toList(), l -> new org.springframework.data.domain.PageImpl<>(l, p, finalFiltered.size())));
     }
 
+    // --- Export ---
     @GetMapping("/export.csv")
     public ResponseEntity<byte[]> exportCsv(@RequestParam(required = false) Long recipientId,
                                              @RequestParam(required = false) Long senderId,
                                              @RequestParam(required = false) String role,
+                                             @RequestParam(required = false) String status,
+                                             @RequestParam(required = false) String category,
                                              @RequestParam(required = false) Long managerId,
-                                             @RequestParam(required = false) Long days) throws Exception {
+                                             @RequestParam(required = false) Long days) {
         List<Recognition> list;
-        boolean applyWindow = (role != null) || (managerId != null) || (days != null);
+        boolean applyWindow = (role != null) || (managerId != null) || (days != null) || (status != null) || (category != null);
         if (applyWindow) {
             long effectiveDays = (days == null || days <= 0) ? 30 : days;
             Instant to = Instant.now();
@@ -212,14 +293,38 @@ public class RecognitionController {
         } else {
             list = recognitionRepository.findAllWithRelations(Pageable.unpaged()).getContent();
         }
-        // apply entity filters
-        if (recipientId != null) list = list.stream().filter(r -> recipientId.equals(r.getRecipientId())).toList();
-        if (senderId != null) list = list.stream().filter(r -> senderId.equals(r.getSenderId())).toList();
-        if (role != null && !role.isBlank()) list = list.stream().filter(r -> r.getRecipient() != null && role.equalsIgnoreCase(r.getRecipient().getRole())).toList();
-        if (managerId != null) list = list.stream().filter(r -> r.getRecipient() != null && managerId.equals(r.getRecipient().getManagerId())).toList();
-        byte[] bytes = csvExporter.export(list);
+        if (recipientId != null && !isAll(recipientId)) list = list.stream().filter(r -> recipientId.equals(r.getRecipientId())).toList();
+        if (senderId != null && !isAll(senderId)) list = list.stream().filter(r -> senderId.equals(r.getSenderId())).toList();
+        if (role != null && !role.isBlank() && !role.equalsIgnoreCase("all")) list = list.stream().filter(r -> r.getRecipient() != null && role.equalsIgnoreCase(r.getRecipient().getRole())).toList();
+        if (status != null && !status.isBlank() && !status.equalsIgnoreCase("all")) {
+            String statusNorm = status.trim().toUpperCase();
+            list = list.stream().filter(r -> {
+                String s = r.getApprovalStatus();
+                return s != null && statusNorm.equals(s.trim().toUpperCase());
+            }).toList();
+        }
+        if (category != null && !category.isBlank() && !category.equalsIgnoreCase("all")) {
+            String categoryNorm = category.trim().toLowerCase();
+            list = list.stream().filter(r -> r.getCategory() != null && r.getCategory().toLowerCase().contains(categoryNorm)).toList();
+        }
+        if (managerId != null && !isAll(managerId)) list = list.stream().filter(r -> r.getRecipient() != null && managerId.equals(r.getRecipient().getManagerId())).toList();
+        if (list.isEmpty()) {
+            return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=empty.csv")
+                .contentType(MediaType.parseMediaType("text/csv"))
+                .body("".getBytes());
+        }
+        byte[] bytes;
+        String fname = timestampedName("recognitions_export", "csv");
+        try {
+            bytes = csvExporter.export(list);
+            Files.createDirectories(Paths.get(CSV_DIR));
+            Files.write(Paths.get(CSV_DIR, fname), bytes);
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(("CSV export failed: " + e.getMessage()).getBytes());
+        }
         return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=recognitions.csv")
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=" + fname)
                 .contentType(MediaType.parseMediaType("text/csv"))
                 .body(bytes);
     }
@@ -228,10 +333,12 @@ public class RecognitionController {
     public ResponseEntity<List<RecognitionResponse>> exportJson(@RequestParam(required = false) Long recipientId,
                                                                  @RequestParam(required = false) Long senderId,
                                                                  @RequestParam(required = false) String role,
+                                                                 @RequestParam(required = false) String status,
+                                                                 @RequestParam(required = false) String category,
                                                                  @RequestParam(required = false) Long managerId,
                                                                  @RequestParam(required = false) Long days) {
         List<Recognition> list;
-        boolean applyWindow = (role != null) || (managerId != null) || (days != null);
+        boolean applyWindow = (role != null) || (managerId != null) || (days != null) || (status != null) || (category != null);
         if (applyWindow) {
             long effectiveDays = (days == null || days <= 0) ? 30 : days;
             Instant to = Instant.now();
@@ -240,95 +347,208 @@ public class RecognitionController {
         } else {
             list = recognitionRepository.findAllWithRelations(Pageable.unpaged()).getContent();
         }
-        if (recipientId != null) list = list.stream().filter(r -> recipientId.equals(r.getRecipientId())).toList();
-        if (senderId != null) list = list.stream().filter(r -> senderId.equals(r.getSenderId())).toList();
-        if (role != null && !role.isBlank()) list = list.stream().filter(r -> r.getRecipient() != null && role.equalsIgnoreCase(r.getRecipient().getRole())).toList();
-        if (managerId != null) list = list.stream().filter(r -> r.getRecipient() != null && managerId.equals(r.getRecipient().getManagerId())).toList();
+        if (recipientId != null && !isAll(recipientId)) list = list.stream().filter(r -> recipientId.equals(r.getRecipientId())).toList();
+        if (senderId != null && !isAll(senderId)) list = list.stream().filter(r -> senderId.equals(r.getSenderId())).toList();
+        if (role != null && !role.isBlank() && !role.equalsIgnoreCase("all")) list = list.stream().filter(r -> r.getRecipient() != null && role.equalsIgnoreCase(r.getRecipient().getRole())).toList();
+        if (status != null && !status.isBlank() && !status.equalsIgnoreCase("all")) {
+            String statusNorm = status.trim().toUpperCase();
+            list = list.stream().filter(r -> {
+                String s = r.getApprovalStatus();
+                return s != null && statusNorm.equals(s.trim().toUpperCase());
+            }).toList();
+        }
+        if (category != null && !category.isBlank() && !category.equalsIgnoreCase("all")) {
+            String categoryNorm = category.trim().toLowerCase();
+            list = list.stream().filter(r -> r.getCategory() != null && r.getCategory().toLowerCase().contains(categoryNorm)).toList();
+        }
+        if (managerId != null && !isAll(managerId)) list = list.stream().filter(r -> r.getRecipient() != null && managerId.equals(r.getRecipient().getManagerId())).toList();
+        if (list.isEmpty()) {
+            return ResponseEntity.ok(List.of());
+        }
         List<RecognitionResponse> resp = list.stream().map(EntityMapper::toRecognitionResponse).collect(Collectors.toList());
+        // Store JSON in json folder
+        try {
+            Files.createDirectories(Paths.get(JSON_DIR));
+            String fname = timestampedName("recognitions_export", "json");
+            String json = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(resp);
+            Files.write(Paths.get(JSON_DIR, fname), json.getBytes());
+        } catch (Exception e) {
+            // Log or ignore
+        }
         return ResponseEntity.ok(resp);
     }
 
-
-    // Deprecated / moved endpoints: redirect to canonical endpoints under /insights or /recognitions/export.csv
-    @Deprecated
-    @GetMapping("/insights")
-    public ResponseEntity<Void> deprecatedInsightsRedirect(@RequestParam(required = false) Long days) {
-        String url = "/insights" + (days == null ? "" : "?days=" + days);
-        return ResponseEntity.status(301).header(HttpHeaders.LOCATION, url).build();
-    }
-
-    @Deprecated
-    @GetMapping(value = "/graph.png", produces = MediaType.IMAGE_PNG_VALUE)
-    public ResponseEntity<Void> deprecatedGraphRedirect(@RequestParam(required = false) Long days) {
-        String url = "/insights/graph.png" + (days == null ? "" : "?days=" + days);
-        return ResponseEntity.status(301).header(HttpHeaders.LOCATION, url).build();
-    }
-
-    @Deprecated
-    @GetMapping("/insights/role")
-    public ResponseEntity<Void> deprecatedInsightsRoleRedirect(@RequestParam String role, @RequestParam(required = false) Long days) {
-        String url = "/insights/role?role=" + role + (days == null ? "" : "&days=" + days);
-        return ResponseEntity.status(301).header(HttpHeaders.LOCATION, url).build();
-    }
-
-    @Deprecated
-    @GetMapping(value = "/insights/role/graph.png", produces = MediaType.IMAGE_PNG_VALUE)
-    public ResponseEntity<Void> deprecatedGraphByRoleRedirect(@RequestParam String role, @RequestParam(required = false) Long days) {
-        String url = "/insights/role/graph.png?role=" + role + (days == null ? "" : "&days=" + days);
-        return ResponseEntity.status(301).header(HttpHeaders.LOCATION, url).build();
-    }
-
-    @Deprecated
-    @GetMapping("/export-role.csv")
-    public ResponseEntity<Void> deprecatedExportRoleRedirect(@RequestParam String role, @RequestParam(required = false) Long days) {
-        String url = "/recognitions/export.csv?role=" + role + (days == null ? "" : "&days=" + days);
-        return ResponseEntity.status(301).header(HttpHeaders.LOCATION, url).build();
-    }
-
-    @Deprecated
-    @GetMapping("/insights/manager/{managerId}")
-    public ResponseEntity<Void> deprecatedInsightsManagerRedirect(@PathVariable Long managerId, @RequestParam(required = false) Long days) {
-        String url = "/insights/manager/" + managerId + (days == null ? "" : "?days=" + days);
-        return ResponseEntity.status(301).header(HttpHeaders.LOCATION, url).build();
-    }
-
-    @Deprecated
-    @GetMapping(value = "/insights/manager/{managerId}/graph.png", produces = MediaType.IMAGE_PNG_VALUE)
-    public ResponseEntity<Void> deprecatedGraphByManagerRedirect(@PathVariable Long managerId, @RequestParam(required = false) Long days) {
-        String url = "/insights/manager/" + managerId + "/graph.png" + (days == null ? "" : "?days=" + days);
-        return ResponseEntity.status(301).header(HttpHeaders.LOCATION, url).build();
-    }
-
-    @Deprecated
-    @GetMapping("/export-manager/{managerId}.csv")
-    public ResponseEntity<Void> deprecatedExportManagerRedirect(@PathVariable Long managerId, @RequestParam(required = false) Long days) {
-        String url = "/recognitions/export.csv?managerId=" + managerId + (days == null ? "" : "&days=" + days);
-        return ResponseEntity.status(301).header(HttpHeaders.LOCATION, url).build();
-    }
-
-    @GetMapping(value = {"/graph/advanced.png", "/graph/advanced"}, produces = {MediaType.IMAGE_PNG_VALUE, MediaType.APPLICATION_JSON_VALUE})
-    public ResponseEntity<byte[]> graphAdvanced(@RequestParam(defaultValue = "daily") String series,
-                                                  @RequestParam(required = false) String role,
-                                                  @RequestParam(required = false) Long managerId,
-                                                  @RequestParam(required = false) Long days,
-                                                  @RequestParam(required = false) Integer buckets,
-                                                  @RequestParam(required = false) String iterations,
-                                                  @RequestParam(required = false) String iteration,
-                                                  @RequestParam(required = false, defaultValue = "png") String format,
-                                                  HttpServletRequest request) throws Exception {
+    @GetMapping("/export.toon")
+    public ResponseEntity<byte[]> exportToon(@RequestParam(required = false) Long recipientId,
+                                             @RequestParam(required = false) Long senderId,
+                                             @RequestParam(required = false) String role,
+                                             @RequestParam(required = false) String status,
+                                             @RequestParam(required = false) String category,
+                                             @RequestParam(required = false) Long managerId,
+                                             @RequestParam(required = false) Long days) {
+        List<Recognition> list;
+        boolean applyWindow = (role != null) || (managerId != null) || (days != null) || (status != null) || (category != null);
+        if (applyWindow) {
+            long effectiveDays = (days == null || days <= 0) ? 30 : days;
+            Instant to = Instant.now();
+            Instant from = to.minus(effectiveDays, ChronoUnit.DAYS);
+            list = recognitionRepository.findAllBetweenWithRelations(from, to);
+        } else {
+            list = recognitionRepository.findAllWithRelations(Pageable.unpaged()).getContent();
+        }
+        if (recipientId != null && !isAll(recipientId)) list = list.stream().filter(r -> recipientId.equals(r.getRecipientId())).toList();
+        if (senderId != null && !isAll(senderId)) list = list.stream().filter(r -> senderId.equals(r.getSenderId())).toList();
+        if (role != null && !role.isBlank() && !role.equalsIgnoreCase("all")) list = list.stream().filter(r -> r.getRecipient() != null && role.equalsIgnoreCase(r.getRecipient().getRole())).toList();
+        if (status != null && !status.isBlank() && !status.equalsIgnoreCase("all")) {
+            String statusNorm = status.trim().toUpperCase();
+            list = list.stream().filter(r -> {
+                String s = r.getApprovalStatus();
+                return s != null && statusNorm.equals(s.trim().toUpperCase());
+            }).toList();
+        }
+        if (category != null && !category.isBlank() && !category.equalsIgnoreCase("all")) {
+            String categoryNorm = category.trim().toLowerCase();
+            list = list.stream().filter(r -> r.getCategory() != null && r.getCategory().toLowerCase().contains(categoryNorm)).toList();
+        }
+        if (managerId != null && !isAll(managerId)) list = list.stream().filter(r -> r.getRecipient() != null && managerId.equals(r.getRecipient().getManagerId())).toList();
+        if (list.isEmpty()) {
+            return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=empty.toon")
+                .contentType(MediaType.parseMediaType("application/octet-stream"))
+                .body(new byte[0]);
+        }
+        byte[] bytes;
+        String fname = timestampedName("recognitions_export", "toon");
         try {
-            // Normalize series selection and compute timeframe (keep original defaults/caps)
-            String rawSeries = series == null ? "daily" : series;
-            java.util.List<String> tokens = java.util.Arrays.stream(rawSeries.split(","))
-                    .map(t -> t.trim().toLowerCase(Locale.ROOT))
-                    .map(t -> "weakly".equals(t) ? "weekly" : t)
-                    .filter(t -> !t.isEmpty())
-                    .collect(Collectors.toList());
-            java.util.Set<String> allowed = java.util.Set.of("daily","weekly","monthly","quarterly","yearly");
-            for (String tok : tokens) {
-                if (!allowed.contains(tok)) {
-                    return ResponseEntity.badRequest().body(("Unsupported series token: " + tok + ". Allowed: " + allowed).getBytes());
+            bytes = toonExporter.export(list);
+            Files.createDirectories(Paths.get("artifacts/exports/toon/"));
+            Files.write(Paths.get("artifacts/exports/toon/", fname), bytes);
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(("TOON export failed: " + e.getMessage()).getBytes());
+        }
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=" + fname)
+                .contentType(MediaType.parseMediaType("application/octet-stream"))
+                .body(bytes);
+    }
+
+    // Unified export endpoint
+    @GetMapping("/export")
+    public ResponseEntity<?> export(@RequestParam String format,
+                                    @RequestParam(required = false) Long recipientId,
+                                    @RequestParam(required = false) Long senderId,
+                                    @RequestParam(required = false) String role,
+                                    @RequestParam(required = false) String status,
+                                    @RequestParam(required = false) String category,
+                                    @RequestParam(required = false) Long managerId,
+                                    @RequestParam(required = false) Long days) {
+        switch (format.toLowerCase()) {
+            case "csv" -> {
+                return exportCsv(recipientId, senderId, role, status, category, managerId, days);
+            }
+            case "json" -> {
+                return exportJson(recipientId, senderId, role, status, category, managerId, days);
+            }
+            case "toon" -> {
+                return exportToon(recipientId, senderId, role, status, category, managerId, days);
+            }
+            default -> {
+                return ResponseEntity.badRequest().body(Map.of("error", "Invalid format: " + format));
+            }
+        }
+    }
+
+    // --- Graph ---
+    @GetMapping(value = "/graph", produces = MediaType.IMAGE_PNG_VALUE)
+    public ResponseEntity<byte[]> graph(
+            @RequestParam(required = false) Long id,
+            @RequestParam(required = false) UUID uuid,
+            @RequestParam(required = false) String name,
+            @RequestParam(required = false) Long unitId,
+            @RequestParam(required = false) String role,
+            @RequestParam(required = false) String sender,
+            @RequestParam(required = false) String receiver,
+            @RequestParam(required = false) String manager,
+            @RequestParam(required = false) String category,
+            @RequestParam(required = false) Integer points,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String type,
+            @RequestParam(required = false, defaultValue = "days") String groupBy, // days, weeks, months, years
+            @RequestParam(required = false, defaultValue = "10") Integer iterations // e.g. 10 weeks
+    ) throws Exception {
+        java.time.Instant now = java.time.Instant.now();
+        java.time.ZoneId zone = java.time.ZoneOffset.UTC;
+        java.time.LocalDate today = java.time.LocalDate.now(zone);
+        java.time.Instant from;
+        // Calculate 'from' based on groupBy
+        switch (groupBy.toLowerCase()) {
+            case "weeks" -> from = today.minusWeeks(iterations - 1L).atStartOfDay(zone).toInstant();
+            case "months" -> from = today.minusMonths(iterations - 1L).withDayOfMonth(1).atStartOfDay(zone).toInstant();
+            case "years" -> from = today.minusYears(iterations - 1L).withDayOfYear(1).atStartOfDay(zone).toInstant();
+            default -> from = today.minusDays(iterations - 1L).atStartOfDay(zone).toInstant();
+        }
+        // 2. Fetch recognitions in window (lite projection)
+        java.util.List<org.example.repository.RecognitionLite> lites = recognitionRepository.findAllLiteBetween(from, now);
+        // 3. Filter by params (same as before)
+        java.util.List<org.example.repository.RecognitionLite> filtered = lites.stream()
+            .filter(r -> id == null || r.getRecipientId() != null && r.getRecipientId().equals(id))
+            .filter(r -> uuid == null)
+            .filter(r -> unitId == null || unitId.toString().equalsIgnoreCase("all") || r.getRecipientId() != null)
+            .filter(r -> role == null || role.equalsIgnoreCase("all") || (r.getLevel() != null && r.getLevel().equalsIgnoreCase(role)))
+            .filter(r -> points == null || points.toString().equalsIgnoreCase("all") || (r.getAwardPoints() != null && r.getAwardPoints().equals(points)))
+            .filter(r -> status == null || status.equalsIgnoreCase("all") || (r.getApprovalStatus() != null && r.getApprovalStatus().equalsIgnoreCase(status)))
+            .toList();
+        // 4. Group by time bucket
+        java.util.Map<String, Integer> timeSeries = new java.util.LinkedHashMap<>();
+        for (int i = iterations - 1; i >= 0; i--) {
+            String label;
+            java.time.LocalDate bucketDate;
+            switch (groupBy.toLowerCase()) {
+                case "weeks" -> {
+                    bucketDate = today.minusWeeks(i);
+                    label = bucketDate.with(java.time.DayOfWeek.MONDAY).toString();
+                }
+                case "months" -> {
+                    bucketDate = today.minusMonths(i).withDayOfMonth(1);
+                    label = bucketDate.toString();
+                }
+                case "years" -> {
+                    bucketDate = today.minusYears(i).withDayOfYear(1);
+                    label = String.valueOf(bucketDate.getYear());
+                }
+                default -> {
+                    bucketDate = today.minusDays(i);
+                    label = bucketDate.toString();
                 }
             }
-            boolean multiGranularity = tokens.size() > 1;
-            String normalized = tokens.get(0);
+            timeSeries.put(label, 0);
+        }
+        for (org.example.repository.RecognitionLite r : filtered) {
+            java.time.Instant sent = r.getSentAt();
+            if (sent == null) continue;
+            java.time.LocalDate sentDate = sent.atZone(zone).toLocalDate();
+            String label;
+            switch (groupBy.toLowerCase()) {
+                case "weeks" -> label = sentDate.with(java.time.DayOfWeek.MONDAY).toString();
+                case "months" -> label = sentDate.withDayOfMonth(1).toString();
+                case "years" -> label = String.valueOf(sentDate.getYear());
+                default -> label = sentDate.toString();
+            }
+            timeSeries.computeIfPresent(label, (k, v) -> v + 1);
+        }
+        String title = "Recognitions";
+        String xLabel = groupBy;
+        String yLabel = "count";
+        byte[] png = chartService.renderTimeSeriesChart(timeSeries, title, xLabel, yLabel);
+        String fname = "recognition_graph-" + java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("dd-MM-yyyy-HH.mm")) + ".png";
+        fileStorageService.storeGraph(fname, png);
+        return ResponseEntity.ok().contentType(MediaType.IMAGE_PNG).body(png);
+    }
+
+    // Helper method for 'all' check
+    private boolean isAll(Object param) {
+        if (param == null) return false;
+        if (param instanceof String s) return s.equalsIgnoreCase("all");
+        return false;
+    }
+}

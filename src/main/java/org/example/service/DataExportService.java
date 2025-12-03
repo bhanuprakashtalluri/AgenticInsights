@@ -112,6 +112,48 @@ public class DataExportService {
         return out;
     }
 
+    public byte[] exportCombinedJson() throws java.io.IOException {
+        // Export all data as a single JSON object
+        java.util.Map<String, Object> data = new java.util.LinkedHashMap<>();
+        data.put("employees", employeeRepo.findAll());
+        data.put("recognition_types", typeRepo.findAll());
+        data.put("recognitions", recognitionRepo.findAll());
+        com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        mapper.registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule());
+        byte[] out = mapper.writerWithDefaultPrettyPrinter().writeValueAsBytes(data);
+        String filename = "data_combined_" + storage.nowTimestamp() + ".json";
+        storage.storeExportJson(filename, out);
+        return out;
+    }
+
+    public byte[] exportCombinedToon() throws java.io.IOException {
+        // Export all data as a TOON (custom text) format
+        StringBuilder sb = new StringBuilder();
+        sb.append("# Employees\n");
+        for (Employee e : employeeRepo.findAll()) {
+            sb.append(e.getFirstName()).append(' ').append(e.getLastName()).append(" | unit:").append(e.getUnitId()).append(" | manager:").append(e.getManagerId()).append(" | email:").append(e.getEmail()).append(" | joined:").append(e.getJoiningDate()).append(" | role:").append(e.getRole()).append('\n');
+        }
+        sb.append("\n# Recognition Types\n");
+        for (RecognitionType t : typeRepo.findAll()) {
+            sb.append(t.getTypeName()).append('\n');
+        }
+        sb.append("\n# Recognitions\n");
+        for (Recognition r : recognitionRepo.findAll()) {
+            sb.append("type:").append(r.getRecognitionType()==null?null:r.getRecognitionType().getId())
+              .append(" | recipient:").append(r.getRecipientId())
+              .append(" | sender:").append(r.getSenderId())
+              .append(" | sentAt:").append(r.getSentAt())
+              .append(" | message:").append(r.getMessage())
+              .append(" | points:").append(r.getAwardPoints())
+              .append(" | status:").append(r.getApprovalStatus())
+              .append('\n');
+        }
+        byte[] out = sb.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        String filename = "data_combined_" + storage.nowTimestamp() + ".toon";
+        storage.storeExportToon(filename, out);
+        return out;
+    }
+
     private static String n(Object o) {
         if (o == null) return "";
         String s = String.valueOf(o);

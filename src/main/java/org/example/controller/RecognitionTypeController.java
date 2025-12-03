@@ -28,26 +28,36 @@ public class RecognitionTypeController {
         return ResponseEntity.status(201).body(EntityMapper.toRecognitionTypeResponse(saved));
     }
 
+    // Helper method for 'all' check
+    private boolean isAll(Object param) {
+        if (param == null) return false;
+        if (param instanceof String s) return s.equalsIgnoreCase("all");
+        return false;
+    }
+
     @GetMapping
-    public List<RecognitionTypeResponse> list() {
+    public List<RecognitionTypeResponse> list(@RequestParam(required = false) String name) {
+        if (name != null && !isAll(name) && !name.isBlank()) {
+            return repo.findByTypeNameContainingIgnoreCase(name).stream().map(EntityMapper::toRecognitionTypeResponse).collect(Collectors.toList());
+        }
         return repo.findAll().stream().map(EntityMapper::toRecognitionTypeResponse).collect(Collectors.toList());
     }
 
-    @GetMapping("/{id}")
-    public ResponseEntity<RecognitionTypeResponse> getById(@PathVariable Long id) {
-        Optional<RecognitionType> t = repo.findById(id);
+    // Unified get by ID or UUID (as request parameters)
+    @GetMapping("/single")
+    public ResponseEntity<RecognitionTypeResponse> getByIdOrUuid(@RequestParam(required = false) Long id, @RequestParam(required = false) UUID uuid) {
+        Optional<RecognitionType> t = Optional.empty();
+        if (id != null) t = repo.findById(id);
+        else if (uuid != null) t = repo.findByUuid(uuid);
         return t.map(rt -> ResponseEntity.ok(EntityMapper.toRecognitionTypeResponse(rt))).orElseGet(() -> ResponseEntity.notFound().build());
     }
 
-    @GetMapping("/uuid/{uuid}")
-    public ResponseEntity<RecognitionTypeResponse> getByUuid(@PathVariable UUID uuid) {
-        Optional<RecognitionType> t = repo.findByUuid(uuid);
-        return t.map(rt -> ResponseEntity.ok(EntityMapper.toRecognitionTypeResponse(rt))).orElseGet(() -> ResponseEntity.notFound().build());
-    }
-
-    @PutMapping("/{id}")
-    public ResponseEntity<RecognitionTypeResponse> update(@PathVariable Long id, @RequestBody RecognitionType req) {
-        Optional<RecognitionType> opt = repo.findById(id);
+    // Unified update by ID or UUID (as request parameters)
+    @PutMapping("/single")
+    public ResponseEntity<RecognitionTypeResponse> update(@RequestParam(required = false) Long id, @RequestParam(required = false) UUID uuid, @RequestBody RecognitionType req) {
+        Optional<RecognitionType> opt = Optional.empty();
+        if (id != null) opt = repo.findById(id);
+        else if (uuid != null) opt = repo.findByUuid(uuid);
         if (opt.isEmpty()) return ResponseEntity.notFound().build();
         RecognitionType t = opt.get();
         if (req.getTypeName() != null) t.setTypeName(req.getTypeName());
@@ -55,10 +65,32 @@ public class RecognitionTypeController {
         return ResponseEntity.ok(EntityMapper.toRecognitionTypeResponse(t));
     }
 
-    @DeleteMapping("/{id}")
-    public ResponseEntity<?> delete(@PathVariable Long id) {
-        if (!repo.existsById(id)) return ResponseEntity.notFound().build();
-        repo.deleteById(id);
+    // Unified delete by ID or UUID (as request parameters)
+    @DeleteMapping("/single")
+    public ResponseEntity<?> delete(@RequestParam(required = false) Long id, @RequestParam(required = false) UUID uuid) {
+        Optional<RecognitionType> opt = Optional.empty();
+        if (id != null) opt = repo.findById(id);
+        else if (uuid != null) opt = repo.findByUuid(uuid);
+        if (opt.isEmpty()) return ResponseEntity.notFound().build();
+        repo.deleteById(opt.get().getId());
         return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/search")
+    public List<RecognitionTypeResponse> search(@RequestParam(required = false) Long id,
+                                                @RequestParam(required = false) java.util.UUID uuid,
+                                                @RequestParam(required = false) String name) {
+        if (id != null) {
+            return repo.findById(id)
+                    .map(t -> List.of(EntityMapper.toRecognitionTypeResponse(t)))
+                    .orElseGet(List::of);
+        } else if (uuid != null) {
+            return repo.findByUuid(uuid)
+                    .map(t -> List.of(EntityMapper.toRecognitionTypeResponse(t)))
+                    .orElseGet(List::of);
+        } else if (name != null && !isAll(name) && !name.isBlank()) {
+            return repo.findByTypeNameContainingIgnoreCase(name).stream().map(EntityMapper::toRecognitionTypeResponse).collect(Collectors.toList());
+        }
+        return repo.findAll().stream().map(EntityMapper::toRecognitionTypeResponse).collect(Collectors.toList());
     }
 }

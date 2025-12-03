@@ -8,7 +8,7 @@ public class RecognitionResponse {
     public UUID uuid;
     public Long recognitionTypeId;
     public String recognitionTypeName;
-    public String awardName;
+    public String category;
     public String level;
     public Long recipientId;
     public UUID recipientUuid;
@@ -27,4 +27,3 @@ public class RecognitionResponse {
 
     public RecognitionResponse() {}
 }
-

@@ -7,15 +7,19 @@ import org.example.service.FileStorageService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.http.MediaType;
 
 import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.Part;
-import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import org.flywaydb.core.Flyway;
 
 @RestController
 @RequestMapping("/admin")
@@ -26,6 +30,15 @@ public class AdminController {
     private final DataImportService dataImportService;
     private final DataExportService dataExportService;
     private final FileStorageService fileStorageService;
+
+    private static final String CSV_DIR = "artifacts/exports/csv/";
+    private static final String JSON_DIR = "artifacts/exports/json/";
+    private static final String TOON_DIR = "artifacts/exports/toon/";
+    private static String timestampedName(String base, String ext) {
+        DateTimeFormatter fmt = DateTimeFormatter.ofPattern("dd-MM-yyyy-HH.mm");
+        String ts = LocalDateTime.now().format(fmt);
+        return base + "-" + ts + (ext != null ? "." + ext : "");
+    }
 
     public AdminController(DevModeService devModeService,
                            DataImportService dataImportService,
@@ -80,126 +93,64 @@ public class AdminController {
         ));
     }
 
-    @PostMapping(value = "/data/upload", consumes = org.springframework.http.MediaType.MULTIPART_FORM_DATA_VALUE)
-    public ResponseEntity<?> uploadData(@RequestParam(required = false) MultipartFile combined,
-                                        @RequestParam(required = false) MultipartFile employees,
-                                        @RequestParam(required = false) MultipartFile recognition_types,
-                                        @RequestParam(required = false) MultipartFile recognitions,
-                                        HttpServletRequest request) {
+    @GetMapping(value = "/export")
+    public ResponseEntity<?> exportFile(@RequestParam("format") String format) {
         try {
-            if (combined == null && employees == null && recognition_types == null && recognitions == null) {
-                return ResponseEntity.badRequest().body(Map.of("error","MISSING_FILE","message","Provide 'combined' or any of 'employees','recognition_types','recognitions' multipart files"));
-            }
-            Map<String,Object> result = new java.util.LinkedHashMap<>();
-            if (combined != null && !combined.isEmpty()) {
-                result.put("combined", dataImportService.importCombinedCsv(combined));
-                // store sample copy
-                fileStorageService.storeSample(combined.getOriginalFilename() == null ? "combined.csv" : combined.getOriginalFilename(), combined.getBytes());
-            }
-            if (employees != null && !employees.isEmpty()) {
-                result.put("employees", dataImportService.importEmployeesCsv(employees));
-                fileStorageService.storeSample(employees.getOriginalFilename() == null ? "employees.csv" : employees.getOriginalFilename(), employees.getBytes());
-            }
-            if (recognition_types != null && !recognition_types.isEmpty()) {
-                result.put("recognition_types", dataImportService.importRecognitionTypesCsv(recognition_types));
-                fileStorageService.storeSample(recognition_types.getOriginalFilename() == null ? "recognition_types.csv" : recognition_types.getOriginalFilename(), recognition_types.getBytes());
-            }
-            if (recognitions != null && !recognitions.isEmpty()) {
-                result.put("recognitions", dataImportService.importRecognitionsCsv(recognitions));
-                fileStorageService.storeSample(recognitions.getOriginalFilename() == null ? "recognitions.csv" : recognitions.getOriginalFilename(), recognitions.getBytes());
-            }
-            return ResponseEntity.ok(result);
-        } catch (Exception e) {
-            return ResponseEntity.status(500).body(Map.of("error","UPLOAD_FAILED","message", e.getMessage()));
-        }
-    }
-
-    @GetMapping(value = "/data/download", produces = org.springframework.http.MediaType.APPLICATION_OCTET_STREAM_VALUE)
-    public ResponseEntity<?> downloadData(@RequestParam(defaultValue = "combined") String format) {
-        try {
-            byte[] bytes;
-            String filename;
+            byte[] out;
+            String contentType;
+            String ext;
             switch (format.toLowerCase(java.util.Locale.ROOT)) {
-                case "employees": bytes = dataExportService.exportEmployeesCsv(); filename = "employees.csv"; break;
-                case "recognition_types": bytes = dataExportService.exportRecognitionTypesCsv(); filename = "recognition_types.csv"; break;
-                case "recognitions": bytes = dataExportService.exportRecognitionsCsv(); filename = "recognitions.csv"; break;
-                default: bytes = dataExportService.exportCombinedCsv(); filename = "data_combined.csv";
+                case "csv":
+                    out = dataExportService.exportCombinedCsv();
+                    contentType = "text/csv";
+                    ext = "csv";
+                    break;
+                case "json":
+                    out = dataExportService.exportCombinedJson();
+                    contentType = "application/json";
+                    ext = "json";
+                    break;
+                case "toon":
+                    out = dataExportService.exportCombinedToon();
+                    contentType = "text/plain";
+                    ext = "toon";
+                    break;
+                default:
+                    return ResponseEntity.badRequest().body(Map.of("status", "ERROR", "error", "Unsupported format: " + format));
             }
-            return ResponseEntity.ok().header("Content-Disposition", "attachment; filename=" + filename).body(bytes);
-        } catch (java.io.IOException e) {
-            return ResponseEntity.status(500).body(Map.of("error","DOWNLOAD_FAILED","message", e.getMessage()));
+            String fname = "data_combined_export-" + java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("dd-MM-yyyy-HH.mm")) + "." + ext;
+            return ResponseEntity.ok()
+                .header("Content-Disposition", "attachment; filename=" + fname)
+                .header("Content-Type", contentType)
+                .body(out);
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(Map.of("status", "ERROR", "error", e.getMessage()));
         }
     }
 
-    @PostMapping("/snapshot")
-    public ResponseEntity<?> runSnapshot() {
-        if (!devModeService.isEnabled()) return ResponseEntity.status(403).body(Map.of(
-                "status", 403,
-                "error", "DEV_DISABLED",
-                "message", "dev mode must be enabled to run snapshots"
-        ));
+    @PostMapping(value = "/import", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<?> importFile(@RequestParam("file") MultipartFile file,
+                                        @RequestParam("format") String format) {
         try {
-            String script = "./scripts/snapshot_db.sh";
-            ProcessBuilder pb = new ProcessBuilder(script);
-            pb.environment().putAll(System.getenv());
-            pb.directory(new java.io.File(System.getProperty("user.dir")));
-            pb.redirectErrorStream(true);
-            Process p = pb.start();
-            java.io.InputStream is = p.getInputStream();
-            java.util.Scanner s = new java.util.Scanner(is).useDelimiter("\\A");
-            String out = s.hasNext() ? s.next() : "";
-            int code = p.waitFor();
-            if (code != 0) {
-                return ResponseEntity.status(500).body(Map.of(
-                        "status", 500,
-                        "error", "SNAPSHOT_FAILED",
-                        "message", "script exited with code " + code,
-                        "detail", out
-                ));
+            Map<String, Object> result;
+            switch (format.toLowerCase(java.util.Locale.ROOT)) {
+                case "csv":
+                    result = dataImportService.importCombinedCsv(file);
+                    break;
+                case "json":
+                    String json = new String(file.getBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                    result = dataImportService.importCombinedJson(json);
+                    break;
+                case "toon":
+                    String toon = new String(file.getBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                    result = dataImportService.importCombinedToon(toon);
+                    break;
+                default:
+                    return ResponseEntity.badRequest().body(Map.of("status", "ERROR", "error", "Unsupported format: " + format));
             }
-            return ResponseEntity.ok(Map.of(
-                    "status", 200,
-                    "message", "snapshot completed",
-                    "output", out
-            ));
+            return ResponseEntity.ok(Map.of("status", "OK", "result", result));
         } catch (Exception e) {
-            return ResponseEntity.status(500).body(Map.of("status",500,"error","SNAPSHOT_ERROR","message",e.getMessage()));
-        }
-    }
-
-    @PostMapping("/verify")
-    public ResponseEntity<?> runVerification() {
-        if (!devModeService.isEnabled()) return ResponseEntity.status(403).body(Map.of(
-                "status", 403,
-                "error", "DEV_DISABLED",
-                "message", "dev mode must be enabled to run verification"
-        ));
-        try {
-            String script = "./scripts/verify_all_endpoints.sh";
-            ProcessBuilder pb = new ProcessBuilder(script);
-            pb.environment().putAll(System.getenv());
-            pb.directory(new java.io.File(System.getProperty("user.dir")));
-            pb.redirectErrorStream(true);
-            Process p = pb.start();
-            java.io.InputStream is = p.getInputStream();
-            java.util.Scanner s = new java.util.Scanner(is).useDelimiter("\\A");
-            String out = s.hasNext() ? s.next() : "";
-            int code = p.waitFor();
-            if (code != 0) {
-                return ResponseEntity.status(500).body(Map.of(
-                        "status", 500,
-                        "error", "VERIFY_FAILED",
-                        "message", "script exited with code " + code,
-                        "detail", out
-                ));
-            }
-            return ResponseEntity.ok(Map.of(
-                    "status", 200,
-                    "message", "verification completed",
-                    "output", out
-            ));
-        } catch (Exception e) {
-            return ResponseEntity.status(500).body(Map.of("status",500,"error","VERIFY_ERROR","message",e.getMessage()));
+            return ResponseEntity.status(500).body(Map.of("status", "ERROR", "error", e.getMessage()));
         }
     }
 }

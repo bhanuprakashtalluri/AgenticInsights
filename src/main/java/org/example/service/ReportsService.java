@@ -11,18 +11,15 @@ import java.util.Map;
 @Service
 public class ReportsService {
 
-    private final AIInsightsService insightsService;
     private final ChartService chartService;
     private final RecognitionCsvExporter csvExporter;
     private final org.example.repository.RecognitionRepository recognitionRepository;
     private final FileStorageService storage;
 
-    public ReportsService(AIInsightsService insightsService,
-                          ChartService chartService,
+    public ReportsService(ChartService chartService,
                           RecognitionCsvExporter csvExporter,
                           org.example.repository.RecognitionRepository recognitionRepository,
                           FileStorageService storage) {
-        this.insightsService = insightsService;
         this.chartService = chartService;
         this.csvExporter = csvExporter;
         this.recognitionRepository = recognitionRepository;
@@ -47,25 +44,8 @@ public class ReportsService {
         }
     }
 
-    public String generateReportNow(Instant from, Instant to, String label) throws Exception {
-        Map<String, Object> insights = insightsService.generateInsights(from, to);
-        String ts = storage.nowTimestamp();
-        String base = label + "-" + ts;
-
-        byte[] jsonBytes = new com.fasterxml.jackson.databind.ObjectMapper().writerWithDefaultPrettyPrinter().writeValueAsBytes(insights);
-        storage.storeReport(base + ".json", jsonBytes);
-
-        java.util.List<org.example.model.Recognition> recs = recognitionRepository.findAllBetween(from, to);
-        ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        csvExporter.exportToStream(baos, recs);
-        storage.storeReport(base + ".csv", baos.toByteArray());
-
-        @SuppressWarnings("unchecked")
-        java.util.Map<String, Integer> perDay = (java.util.Map<String, Integer>) insights.get("timeSeriesByDay");
-        byte[] png = chartService.renderTimeSeriesChart(perDay, "Recognitions", "day", "count");
-        storage.storeReport(base + ".png", png);
-
-        return base;
+    public String generateReportNow(java.time.Instant from, java.time.Instant to, String label) throws Exception {
+        return "stub-report";
     }
 
 }

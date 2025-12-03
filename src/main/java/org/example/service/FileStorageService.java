@@ -14,7 +14,6 @@ import java.time.format.DateTimeFormatter;
 @Service
 public class FileStorageService {
     private final Path base;
-    // Use MM-dd-yyyy to match shell scripts and existing logs
     private final DateTimeFormatter dayFmt = DateTimeFormatter.ofPattern("MM-dd-yyyy");
     private final DateTimeFormatter tsFmt = DateTimeFormatter.ofPattern("MM-dd-yyyy-HH.mm.ss");
 
@@ -27,14 +26,15 @@ public class FileStorageService {
         }
     }
 
-    public Path getBase() { return base; }
+    public Path getBase() {
+        return base;
+    }
 
     public Path getReportsDirForToday() {
         return base.resolve("reports").resolve(LocalDate.now().format(dayFmt));
     }
 
     public Path getGraphsDirForToday() {
-        // graphs are part of exports under the new layout
         return base.resolve("exports").resolve("graphs").resolve(LocalDate.now().format(dayFmt));
     }
 
@@ -46,15 +46,8 @@ public class FileStorageService {
         return base.resolve("exports").resolve("json").resolve(LocalDate.now().format(dayFmt));
     }
 
-    public Path getSamplesDirForNow() {
-        String ts = LocalDateTime.now().format(tsFmt);
-        Path dir = base.resolve("samples").resolve(ts);
-        return dir;
-    }
-
-    public Path getLogsDirForToday() {
-        // verification logs moved to verification_logs
-        return base.resolve("verification_logs").resolve(LocalDate.now().format(dayFmt));
+    public Path getExportsToonDirForToday() {
+        return base.resolve("exports").resolve("toon").resolve(LocalDate.now().format(dayFmt));
     }
 
     public Path storeReport(String filename, byte[] bytes) throws IOException {
@@ -89,23 +82,14 @@ public class FileStorageService {
         return target;
     }
 
-    public Path storeSample(String filename, byte[] bytes) throws IOException {
-        Path dir = getSamplesDirForNow();
+    public Path storeExportToon(String filename, byte[] bytes) throws IOException {
+        Path dir = getExportsToonDirForToday();
         Files.createDirectories(dir);
         Path target = dir.resolve(filename);
-        Files.write(target, bytes, StandardOpenOption.CREATE_NEW);
+        Files.write(target, bytes, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
         return target;
     }
 
-    public Path storeLog(String filename, byte[] bytes) throws IOException {
-        Path dir = getLogsDirForToday();
-        Files.createDirectories(dir);
-        Path target = dir.resolve(filename);
-        Files.write(target, bytes, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
-        return target;
-    }
-
-    // helper to get current timestamp string in configured format
     public String nowTimestamp() {
         return LocalDateTime.now().format(tsFmt);
     }

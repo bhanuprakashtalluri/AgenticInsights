@@ -37,7 +37,7 @@ public class EntityMapper {
         out.uuid = r.getUuid();
         out.recognitionTypeId = r.getRecognitionType() == null ? null : r.getRecognitionType().getId();
         out.recognitionTypeName = r.getRecognitionType() == null ? null : r.getRecognitionType().getTypeName();
-        out.awardName = r.getAwardName();
+        out.category = r.getCategory();
         out.level = r.getLevel();
         out.recipientId = r.getRecipientId();
         out.recipientUuid = r.getRecipient() == null ? null : r.getRecipient().getUuid();
@@ -60,4 +60,3 @@ public class EntityMapper {
         return new LeaderboardEntry(id, name, count, points);
     }
 }
-

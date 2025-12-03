@@ -5,7 +5,7 @@ import java.util.UUID;
 public class RecognitionCreateRequest {
     public Long recognitionTypeId;
     public UUID recognitionTypeUuid;
-    public String awardName;
+    public String category;
     public String level;
     public Long recipientId;
     public UUID recipientUuid;
@@ -15,4 +15,3 @@ public class RecognitionCreateRequest {
     public String message;
     public Integer awardPoints;
 }
-

@@ -1,66 +1,53 @@
--- V1: Create extensions and tables for recognitions app
+-- Clean, precise schema for recognitions app
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
--- Employees table
 CREATE TABLE IF NOT EXISTS employee (
   id BIGSERIAL PRIMARY KEY,
-  uuid UUID NOT NULL DEFAULT gen_random_uuid(),
+  uuid UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
   first_name VARCHAR(100) NOT NULL,
   last_name VARCHAR(100) NOT NULL,
-  unit_id BIGINT, -- team/unit id reference if needed
+  unit_id BIGINT,
   manager_id BIGINT,
   email VARCHAR(255),
   joining_date DATE,
   role VARCHAR(50) DEFAULT 'employee',
   terminated_at TIMESTAMP WITH TIME ZONE,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
-  CONSTRAINT uq_employee_uuid UNIQUE (uuid)
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
-
 CREATE INDEX IF NOT EXISTS idx_employee_manager ON employee(manager_id);
 CREATE INDEX IF NOT EXISTS idx_employee_unit ON employee(unit_id);
+CREATE INDEX IF NOT EXISTS idx_employee_role ON employee(role);
 
--- Recognition types
 CREATE TABLE IF NOT EXISTS recognition_type (
   id BIGSERIAL PRIMARY KEY,
-  uuid UUID NOT NULL DEFAULT gen_random_uuid(),
-  type_name VARCHAR(150) NOT NULL,
+  uuid UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+  type_name VARCHAR(150) NOT NULL UNIQUE,
   created_by BIGINT,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
-  CONSTRAINT uq_recognition_type_uuid UNIQUE (uuid)
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
 
--- Enforce uniqueness on type_name (case-insensitive) to prevent duplicates
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint c
-    JOIN pg_class t ON c.conrelid = t.oid
-    WHERE c.conname = 'uq_recognition_type_name' AND t.relname = 'recognition_type'
-  ) THEN
-    ALTER TABLE recognition_type ADD CONSTRAINT uq_recognition_type_name UNIQUE (lower(type_name));
-  END IF;
-EXCEPTION WHEN duplicate_object THEN NULL; END$$;
-
--- Recognitions
 CREATE TABLE IF NOT EXISTS recognitions (
   id BIGSERIAL PRIMARY KEY,
-  uuid UUID NOT NULL DEFAULT gen_random_uuid(),
+  uuid UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
   recognition_type_id BIGINT REFERENCES recognition_type(id) ON DELETE SET NULL,
-  award_name VARCHAR(255),
-  level VARCHAR(100),
+  category VARCHAR(255), -- was award_name
+  level VARCHAR(100), -- only for recognition type 'award'
   recipient_id BIGINT REFERENCES employee(id) ON DELETE CASCADE,
   sender_id BIGINT REFERENCES employee(id) ON DELETE SET NULL,
   sent_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
   message TEXT,
   award_points INTEGER DEFAULT 0,
-  approval_status VARCHAR(50) DEFAULT 'PENDING', -- e.g., PENDING/APPROVED/REJECTED
+  approval_status VARCHAR(50) DEFAULT 'PENDING',
   rejection_reason TEXT,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
-  CONSTRAINT uq_recognitions_uuid UNIQUE (uuid)
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
-
 CREATE INDEX IF NOT EXISTS idx_recipient ON recognitions(recipient_id);
 CREATE INDEX IF NOT EXISTS idx_sender ON recognitions(sender_id);
 CREATE INDEX IF NOT EXISTS idx_recog_type ON recognitions(recognition_type_id);
 CREATE INDEX IF NOT EXISTS idx_sent_at ON recognitions(sent_at);
+CREATE INDEX IF NOT EXISTS idx_recog_level ON recognitions(level);
+CREATE INDEX IF NOT EXISTS idx_recog_approval ON recognitions(approval_status);
+CREATE INDEX IF NOT EXISTS idx_recognitions_sent_at ON recognitions (sent_at);
+CREATE INDEX IF NOT EXISTS idx_recognitions_sender_sent_at ON recognitions (sender_id, sent_at);
+CREATE INDEX IF NOT EXISTS idx_recognitions_recipient_sent_at ON recognitions (recipient_id, sent_at);

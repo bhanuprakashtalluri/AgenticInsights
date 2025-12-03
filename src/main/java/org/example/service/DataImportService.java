@@ -171,6 +171,16 @@ public class DataImportService {
         return Map.of("inserted", inserted, "errors", errors);
     }
 
+    public Map<String, Object> importCombinedJson(String json) {
+        // TODO: Implement actual JSON import logic
+        return java.util.Map.of("message", "JSON import not implemented");
+    }
+
+    public Map<String, Object> importCombinedToon(String toon) {
+        // TODO: Implement actual TOON import logic
+        return java.util.Map.of("message", "TOON import not implemented");
+    }
+
     private static String safe(String[] arr, int idx) { return idx < arr.length ? emptyToNull(arr[idx]) : null; }
     private static String emptyToNull(String s) { return (s==null || s.isBlank())?null:s; }
     private static Long parseLong(String s) { try { return s==null?null:Long.parseLong(s); } catch (Exception e) { return null; } }
@@ -190,4 +200,3 @@ public class DataImportService {
         return out.toArray(new String[0]);
     }
 }
-
