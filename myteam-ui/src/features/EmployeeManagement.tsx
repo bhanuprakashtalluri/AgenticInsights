@@ -195,6 +195,16 @@ const EmployeeManagement: React.FC = () => {
     return sorted.slice(page * pageSize, (page + 1) * pageSize);
   };
 
+  const sortableColumns = [
+    { key: 'firstName', label: 'First Name' },
+    { key: 'lastName', label: 'Last Name' },
+    { key: 'email', label: 'Email' },
+    { key: 'role', label: 'Role' },
+    { key: 'unitId', label: 'Unit' },
+    { key: 'managerId', label: 'Manager' },
+    { key: 'joiningDate', label: 'Joining Date' },
+  ];
+
   if (loading) return <div>Loading employees...</div>;
   return (
     <div style={{ width: '100%', minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
@@ -245,111 +255,29 @@ const EmployeeManagement: React.FC = () => {
         <table style={{ width: '100%', borderCollapse: 'collapse', background: '#fff', borderRadius: 8, boxShadow: '0 2px 8px #e0e0e0', fontSize: '0.7rem' }}>
           <thead>
             <tr style={{ background: '#8da1bd' }}>
-              <th style={{ padding: 8, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}
+              {sortableColumns.map(col => (
+                <th
+                  key={col.key}
+                  style={{ padding: 8, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}
                   onClick={() => {
-                    setSortField('firstName');
-                    setSortOrder(sortField === 'firstName' ? (sortOrder === 'asc' ? 'desc' : 'asc') : 'asc');
-                  }}>
-                First Name
-                <span style={{ marginLeft: 4, color: sortField === 'firstName' ? '#222' : '#bbb', cursor: 'pointer' }}
-                      onClick={e => {
-                        e.stopPropagation();
-                        setSortField('firstName');
-                        setSortOrder(sortField === 'firstName' ? (sortOrder === 'asc' ? 'desc' : 'asc') : 'asc');
-                      }}>
-                  {sortField === 'firstName' ? (sortOrder === 'asc' ? '▲' : '▼') : (sortOrder === 'asc' ? '▲' : '▼')}
-                </span>
-              </th>
-              <th style={{ padding: 8, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}
-                  onClick={() => {
-                    setSortField('lastName');
-                    setSortOrder(sortField === 'lastName' ? (sortOrder === 'asc' ? 'desc' : 'asc') : 'asc');
-                  }}>
-                Last Name
-                <span style={{ marginLeft: 4, color: sortField === 'lastName' ? '#222' : '#bbb', cursor: 'pointer' }}
-                      onClick={e => {
-                        e.stopPropagation();
-                        setSortField('lastName');
-                        setSortOrder(sortField === 'lastName' ? (sortOrder === 'asc' ? 'desc' : 'asc') : 'asc');
-                      }}>
-                  {sortField === 'lastName' ? (sortOrder === 'asc' ? '▲' : '▼') : (sortOrder === 'asc' ? '▲' : '▼')}
-                </span>
-              </th>
-              <th style={{ padding: 8, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}
-                  onClick={() => {
-                    setSortField('email');
-                    setSortOrder(sortField === 'email' ? (sortOrder === 'asc' ? 'desc' : 'asc') : 'asc');
-                  }}>
-                Email
-                <span style={{ marginLeft: 4, color: sortField === 'email' ? '#222' : '#bbb', cursor: 'pointer' }}
-                      onClick={e => {
-                        e.stopPropagation();
-                        setSortField('email');
-                        setSortOrder(sortField === 'email' ? (sortOrder === 'asc' ? 'desc' : 'asc') : 'asc');
-                      }}>
-                  {sortField === 'email' ? (sortOrder === 'asc' ? '▲' : '▼') : (sortOrder === 'asc' ? '▲' : '▼')}
-                </span>
-              </th>
-              <th style={{ padding: 8, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}
-                  onClick={() => {
-                    setSortField('role');
-                    setSortOrder(sortField === 'role' ? (sortOrder === 'asc' ? 'desc' : 'asc') : 'asc');
-                  }}>
-                Role
-                <span style={{ marginLeft: 4, color: sortField === 'role' ? '#222' : '#bbb', cursor: 'pointer' }}
-                      onClick={e => {
-                        e.stopPropagation();
-                        setSortField('role');
-                        setSortOrder(sortField === 'role' ? (sortOrder === 'asc' ? 'desc' : 'asc') : 'asc');
-                      }}>
-                  {sortField === 'role' ? (sortOrder === 'asc' ? '▲' : '▼') : (sortOrder === 'asc' ? '▲' : '▼')}
-                </span>
-              </th>
-              <th style={{ padding: 8, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}
-                  onClick={() => {
-                    setSortField('unitId');
-                    setSortOrder(sortField === 'unitId' ? (sortOrder === 'asc' ? 'desc' : 'asc') : 'asc');
-                  }}>
-                Unit
-                <span style={{ marginLeft: 4, color: sortField === 'unitId' ? '#222' : '#bbb', cursor: 'pointer' }}
-                      onClick={e => {
-                        e.stopPropagation();
-                        setSortField('unitId');
-                        setSortOrder(sortField === 'unitId' ? (sortOrder === 'asc' ? 'desc' : 'asc') : 'asc');
-                      }}>
-                  {sortField === 'unitId' ? (sortOrder === 'asc' ? '▲' : '▼') : (sortOrder === 'asc' ? '▲' : '▼')}
-                </span>
-              </th>
-              <th style={{ padding: 8, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}
-                  onClick={() => {
-                    setSortField('managerId');
-                    setSortOrder(sortField === 'managerId' ? (sortOrder === 'asc' ? 'desc' : 'asc') : 'asc');
-                  }}>
-                Manager
-                <span style={{ marginLeft: 4, color: sortField === 'managerId' ? '#222' : '#bbb', cursor: 'pointer' }}
-                      onClick={e => {
-                        e.stopPropagation();
-                        setSortField('managerId');
-                        setSortOrder(sortField === 'managerId' ? (sortOrder === 'asc' ? 'desc' : 'asc') : 'asc');
-                      }}>
-                  {sortField === 'managerId' ? (sortOrder === 'asc' ? '▲' : '▼') : (sortOrder === 'asc' ? '▲' : '▼')}
-                </span>
-              </th>
-              <th style={{ padding: 8, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}
-                  onClick={() => {
-                    setSortField('joiningDate');
-                    setSortOrder(sortField === 'joiningDate' ? (sortOrder === 'asc' ? 'desc' : 'asc') : 'asc');
-                  }}>
-                Joining Date
-                <span style={{ marginLeft: 4, color: sortField === 'joiningDate' ? '#222' : '#bbb', cursor: 'pointer' }}
-                      onClick={e => {
-                        e.stopPropagation();
-                        setSortField('joiningDate');
-                        setSortOrder(sortField === 'joiningDate' ? (sortOrder === 'asc' ? 'desc' : 'asc') : 'asc');
-                      }}>
-                  {sortField === 'joiningDate' ? (sortOrder === 'asc' ? '▲' : '▼') : (sortOrder === 'asc' ? '▲' : '▼')}
-                </span>
-              </th>
+                    if (sortField === col.key) {
+                      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+                    } else {
+                      setSortField(col.key);
+                      setSortOrder('asc');
+                    }
+                  }}
+                >
+                  {col.label}
+                  {sortField === col.key ? (
+                    <span style={{ marginLeft: 4, color: '#000', fontWeight: 700, fontSize: '1rem', cursor: 'pointer' }}>
+                      {sortOrder === 'asc' ? '▲' : '▼'}
+                    </span>
+                  ) : (
+                    <span style={{ marginLeft: 4, color: '#bbb', fontWeight: 700, fontSize: '1rem', cursor: 'pointer' }}>▲▼</span>
+                  )}
+                </th>
+              ))}
               <th style={{ padding: 8 }}>Actions</th>
             </tr>
           </thead>

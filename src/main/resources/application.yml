@@ -3,9 +3,9 @@ server:
 
 spring:
   datasource:
-    url: ${SPRING_DATASOURCE_URL}
-    username: ${SPRING_DATASOURCE_USERNAME}
-    password: ${SPRING_DATASOURCE_PASSWORD}
+    url: jdbc:postgresql://localhost:5432/recognitions
+    username: postgres
+    password: rmkec
     hikari:
       maximum-pool-size: 10
   jpa:
@@ -32,9 +32,9 @@ logging:
 
 app:
   dev:
-    enabled: ${APP_DEV_ENABLED}
+    enabled: false
   reports:
-    path: ${REPORTS_PATH}
+    path: /Users/bhanuprakash.tall/Downloads/MyTeam-API-Agent/artifacts/reports
     daily-cron: "0 0 6 * * *"   # every day at 06:00 UTC
     monthly-cron: "0 0 7 1 * *" # first day of month at 07:00 UTC
 
@@ -61,6 +61,6 @@ springai:
   audit:
     enabled: true
     datasource:
-      url: ${SPRING_DATASOURCE_URL}
-      username: ${SPRING_DATASOURCE_USERNAME}
-      password: ${SPRING_DATASOURCE_PASSWORD}
+      url: jdbc:postgresql://localhost:5432/recognitions
+      username: postgres
+      password: rmkec

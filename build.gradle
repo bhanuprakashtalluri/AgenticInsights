@@ -71,12 +71,3 @@ tasks.named('bootRun') {
         args project.property('args').toString().split(',')
     }
 }
-
-flyway {
-    url = System.getenv('SPRING_DATASOURCE_URL')
-    user = System.getenv('SPRING_DATASOURCE_USERNAME')
-    password = System.getenv('SPRING_DATASOURCE_PASSWORD')
-    locations = ['filesystem:src/main/resources/db/migration']
-    cleanDisabled = false
-}
-// NOTE: To use .env, run `source .env` in your shell before running Gradle commands.
