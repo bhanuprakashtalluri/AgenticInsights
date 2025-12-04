@@ -23,6 +23,11 @@ const RecognitionTypeManagement: React.FC = () => {
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
   const [search, setSearch] = useState('');
 
+  const [createForm, setCreateForm] = useState({ typeName: '' });
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState('');
+  const [createSuccess, setCreateSuccess] = useState('');
+
   const fetchTypes = async (newPage = page, newPageSize = pageSize) => {
     setLoading(true);
     setError('');
@@ -108,9 +113,50 @@ const RecognitionTypeManagement: React.FC = () => {
     fetchTypes(0, newSize);
   };
 
+  const handleCreateInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setCreateForm({ ...createForm, [e.target.name]: e.target.value });
+  };
+
+  const handleCreate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setCreating(true);
+    setCreateError('');
+    setCreateSuccess('');
+    try {
+      const token = localStorage.getItem('token');
+      await axios.post('/recognition-types', { typeName: createForm.typeName }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setCreateSuccess('Recognition type created successfully');
+      setCreateForm({ typeName: '' });
+      fetchTypes();
+      fetchAllTypes();
+    } catch (err: any) {
+      setCreateError('Failed to create recognition type');
+    } finally {
+      setCreating(false);
+    }
+  };
+
   return (
     <div style={{ width: '100%', overflowX: 'auto' }}>
       <h3 style={{ textAlign: 'center', fontSize: '1rem', fontWeight: 600, marginBottom: 12 }}>Recognition Types</h3>
+      <form onSubmit={handleCreate} style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12, justifyContent: 'center' }}>
+        <input
+          type="text"
+          name="typeName"
+          value={createForm.typeName}
+          onChange={handleCreateInputChange}
+          placeholder="New recognition type name"
+          style={{ padding: '7px 12px', fontSize: '0.8rem', borderRadius: 6, border: '1px solid #ccc', width: 220 }}
+          required
+        />
+        <button type="submit" disabled={creating || !createForm.typeName.trim()} style={{ padding: '7px 18px', fontSize: '0.8rem', borderRadius: 6, background: '#2d6cdf', color: '#fff', border: 'none', fontWeight: 600, cursor: creating ? 'not-allowed' : 'pointer' }}>
+          {creating ? 'Creating...' : 'Create'}
+        </button>
+      </form>
+      {createError && <div style={{ color: 'red', fontSize: '0.7rem', marginBottom: 8, textAlign: 'center' }}>{createError}</div>}
+      {createSuccess && <div style={{ color: 'green', fontSize: '0.7rem', marginBottom: 8, textAlign: 'center' }}>{createSuccess}</div>}
       {loading && <div style={{ fontSize: '0.7rem' }}>Loading recognition types...</div>}
       {error && <div style={{ color: 'red', fontSize: '0.7rem', marginBottom: 8 }}>{error}</div>}
       <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8 }}>
