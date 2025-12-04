@@ -7,6 +7,7 @@ import org.example.dto.RecognitionTypeResponse;
 import org.example.model.Employee;
 import org.example.model.Recognition;
 import org.example.model.RecognitionType;
+import org.example.repository.EmployeeRepository;
 
 public class EntityMapper {
 
@@ -25,9 +26,25 @@ public class EntityMapper {
         return r;
     }
 
-    public static RecognitionTypeResponse toRecognitionTypeResponse(RecognitionType t) {
+    public static RecognitionTypeResponse toRecognitionTypeResponse(RecognitionType t, EmployeeRepository employeeRepo) {
         if (t == null) return null;
-        return new RecognitionTypeResponse(t.getId(), t.getUuid(), t.getTypeName());
+        String createdByName = null;
+        if (t.getCreatedBy() != null) {
+            var empOpt = employeeRepo.findById(t.getCreatedBy());
+            if (empOpt.isPresent()) {
+                var emp = empOpt.get();
+                createdByName = emp.getFirstName() + " " + emp.getLastName();
+            } else {
+                createdByName = String.valueOf(t.getCreatedBy());
+            }
+        }
+        return new RecognitionTypeResponse(
+            t.getId(),
+            t.getUuid(),
+            t.getTypeName(),
+            createdByName,
+            t.getCreatedAt() == null ? null : t.getCreatedAt().toString()
+        );
     }
 
     public static RecognitionResponse toRecognitionResponse(Recognition r) {

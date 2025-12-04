@@ -12,6 +12,17 @@ const RecognitionTypeManagement: React.FC = () => {
   const [pageSize, setPageSize] = useState(20);
   const [totalPages, setTotalPages] = useState(1);
 
+  const sortableColumns = [
+    { key: 'id', label: 'ID' },
+    { key: 'typeName', label: 'Type Name' },
+    { key: 'createdBy', label: 'Created By' },
+    { key: 'createdAt', label: 'Created At' },
+  ];
+  const [allTypes, setAllTypes] = useState<any[]>([]);
+  const [sortField, setSortField] = useState('typeName');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
+  const [search, setSearch] = useState('');
+
   const fetchTypes = async (newPage = page, newPageSize = pageSize) => {
     setLoading(true);
     setError('');
@@ -33,9 +44,59 @@ const RecognitionTypeManagement: React.FC = () => {
     }
   };
 
+  const fetchAllTypes = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const res = await axios.get('/recognition-types?page=0&size=10000', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setAllTypes(res.data.content || []);
+    } catch (err) {
+      setAllTypes([]);
+    }
+  };
+
   useEffect(() => {
     fetchTypes();
+    fetchAllTypes();
   }, []);
+
+  const sortTypes = (data: any[]) => {
+    return [...data].sort((a, b) => {
+      let aVal = a[sortField];
+      let bVal = b[sortField];
+      if (aVal === undefined || aVal === null) aVal = '';
+      if (bVal === undefined || bVal === null) bVal = '';
+      if (!isNaN(Number(aVal)) && !isNaN(Number(bVal))) {
+        aVal = Number(aVal);
+        bVal = Number(bVal);
+      } else {
+        aVal = String(aVal).toLowerCase();
+        bVal = String(bVal).toLowerCase();
+      }
+      if (aVal < bVal) return sortOrder === 'asc' ? -1 : 1;
+      if (aVal > bVal) return sortOrder === 'asc' ? 1 : -1;
+      return 0;
+    });
+  };
+
+  const getFilteredTypes = () => {
+    const source = search.trim() ? allTypes : types;
+    if (!search.trim()) return types;
+    const q = search.trim().toLowerCase();
+    return source.filter(type =>
+      [type.id, type.typeName, type.createdBy, type.createdAt]
+        .map(val => (val !== undefined && val !== null ? String(val).toLowerCase() : ''))
+        .some(val => val.includes(q))
+    );
+  };
+
+  const getPagedTypes = () => {
+    const filtered = sortTypes(getFilteredTypes());
+    const total = Math.max(1, Math.ceil(filtered.length / pageSize));
+    if (totalPages !== total) setTotalPages(total);
+    return filtered.slice(page * pageSize, (page + 1) * pageSize);
+  };
 
   const handlePageChange = (newPage: number) => {
     fetchTypes(newPage, pageSize);
@@ -52,6 +113,15 @@ const RecognitionTypeManagement: React.FC = () => {
       <h3 style={{ textAlign: 'center', fontSize: '1rem', fontWeight: 600, marginBottom: 12 }}>Recognition Types</h3>
       {loading && <div style={{ fontSize: '0.7rem' }}>Loading recognition types...</div>}
       {error && <div style={{ color: 'red', fontSize: '0.7rem', marginBottom: 8 }}>{error}</div>}
+      <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8 }}>
+        <input
+          type="text"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Search recognition types..."
+          style={{ padding: '7px 12px', fontSize: '0.8rem', borderRadius: 6, border: '1px solid #ccc', width: 220 }}
+        />
+      </div>
       <div style={{ marginBottom: 14, display: 'flex', alignItems: 'center', gap: 14, fontSize: '0.7rem', justifyContent: 'center', width: '100%' }}>
         <label>Page Size:</label>
         <select value={pageSize} onChange={handlePageSizeChange} style={{ padding: 5, fontSize: '0.7rem' }}>
@@ -70,31 +140,39 @@ const RecognitionTypeManagement: React.FC = () => {
       <table style={{ width: '100%', fontSize: '0.7rem', background: '#fff', borderRadius: 8, boxShadow: '0 2px 8px #e0e0e0' }}>
         <thead>
           <tr style={{ background: '#8da1bd' }}>
-            <th style={{ padding: 8, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}>
-              Type Name
-              <span style={{ marginLeft: 4, color: '#bbb' }}>▲▼</span>
-            </th>
-            <th style={{ padding: 8, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}>
-              Description
-              <span style={{ marginLeft: 4, color: '#bbb' }}>▲▼</span>
-            </th>
-            <th style={{ padding: 8, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}>
-              Default Points
-              <span style={{ marginLeft: 4, color: '#bbb' }}>▲▼</span>
-            </th>
+            {sortableColumns.map(col => (
+              <th
+                key={col.key}
+                style={{ padding: 8, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}
+                onClick={() => {
+                  if (sortField === col.key) {
+                    setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+                  } else {
+                    setSortField(col.key);
+                    setSortOrder('asc');
+                  }
+                }}
+              >
+                {col.label}
+                <span style={{ marginLeft: 4, color: sortField === col.key ? '#000' : '#bbb', fontWeight: 700, fontSize: '1rem', cursor: 'pointer' }}>
+                  {sortField === col.key ? (sortOrder === 'asc' ? '▲' : '▼') : '▲▼'}
+                </span>
+              </th>
+            ))}
           </tr>
         </thead>
         <tbody>
-          {types.map(type => (
+          {getPagedTypes().map(type => (
             <tr key={type.id} style={{ background: '#fff' }}>
+              <td style={{ padding: 8 }}>{type.id}</td>
               <td style={{ padding: 8 }}>{type.typeName}</td>
-              <td style={{ padding: 8 }}>{type.description || '-'}</td>
-              <td style={{ padding: 8 }}>{type.defaultPoints || '-'}</td>
+              <td style={{ padding: 8 }}>{type.createdBy}</td>
+              <td style={{ padding: 8 }}>{type.createdAt ? new Date(type.createdAt).toLocaleString() : '-'}</td>
             </tr>
           ))}
         </tbody>
       </table>
-      {!loading && !error && types.length === 0 && (
+      {!loading && !error && getPagedTypes().length === 0 && (
         <div style={{ fontSize: '0.7rem', color: '#888', marginTop: 12 }}>No recognition types found.</div>
       )}
     </div>

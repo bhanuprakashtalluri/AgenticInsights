@@ -2,6 +2,7 @@ package org.example.controller;
 
 import org.example.dto.RecognitionTypeResponse;
 import org.example.model.RecognitionType;
+import org.example.repository.EmployeeRepository;
 import org.example.repository.RecognitionTypeRepository;
 import org.example.util.EntityMapper;
 import org.springframework.http.ResponseEntity;
@@ -17,15 +18,17 @@ import java.util.stream.Collectors;
 public class RecognitionTypeController {
 
     private final RecognitionTypeRepository repo;
+    private final EmployeeRepository employeeRepo;
 
-    public RecognitionTypeController(RecognitionTypeRepository repo) {
+    public RecognitionTypeController(RecognitionTypeRepository repo, EmployeeRepository employeeRepo) {
         this.repo = repo;
+        this.employeeRepo = employeeRepo;
     }
 
     @PostMapping
     public ResponseEntity<RecognitionTypeResponse> create(@RequestBody RecognitionType t) {
         RecognitionType saved = repo.save(t);
-        return ResponseEntity.status(201).body(EntityMapper.toRecognitionTypeResponse(saved));
+        return ResponseEntity.status(201).body(EntityMapper.toRecognitionTypeResponse(saved, employeeRepo));
     }
 
     // Helper method for 'all' check
@@ -46,7 +49,7 @@ public class RecognitionTypeController {
         } else {
             pageResult = repo.findAll(p);
         }
-        return pageResult.map(EntityMapper::toRecognitionTypeResponse);
+        return pageResult.map(t -> EntityMapper.toRecognitionTypeResponse(t, employeeRepo));
     }
 
     // Unified get by ID or UUID (as request parameters)
@@ -55,7 +58,7 @@ public class RecognitionTypeController {
         Optional<RecognitionType> t = Optional.empty();
         if (id != null) t = repo.findById(id);
         else if (uuid != null) t = repo.findByUuid(uuid);
-        return t.map(rt -> ResponseEntity.ok(EntityMapper.toRecognitionTypeResponse(rt))).orElseGet(() -> ResponseEntity.notFound().build());
+        return t.map(rt -> ResponseEntity.ok(EntityMapper.toRecognitionTypeResponse(rt, employeeRepo))).orElseGet(() -> ResponseEntity.notFound().build());
     }
 
     // Unified update by ID or UUID (as request parameters)
@@ -68,7 +71,7 @@ public class RecognitionTypeController {
         RecognitionType t = opt.get();
         if (req.getTypeName() != null) t.setTypeName(req.getTypeName());
         repo.save(t);
-        return ResponseEntity.ok(EntityMapper.toRecognitionTypeResponse(t));
+        return ResponseEntity.ok(EntityMapper.toRecognitionTypeResponse(t, employeeRepo));
     }
 
     // Unified delete by ID or UUID (as request parameters)
@@ -88,15 +91,15 @@ public class RecognitionTypeController {
                                                 @RequestParam(required = false) String name) {
         if (id != null) {
             return repo.findById(id)
-                    .map(t -> List.of(EntityMapper.toRecognitionTypeResponse(t)))
+                    .map(t -> List.of(EntityMapper.toRecognitionTypeResponse(t, employeeRepo)))
                     .orElseGet(List::of);
         } else if (uuid != null) {
             return repo.findByUuid(uuid)
-                    .map(t -> List.of(EntityMapper.toRecognitionTypeResponse(t)))
+                    .map(t -> List.of(EntityMapper.toRecognitionTypeResponse(t, employeeRepo)))
                     .orElseGet(List::of);
         } else if (name != null && !isAll(name) && !name.isBlank()) {
-            return repo.findByTypeNameContainingIgnoreCase(name).stream().map(EntityMapper::toRecognitionTypeResponse).collect(Collectors.toList());
+            return repo.findByTypeNameContainingIgnoreCase(name).stream().map(t -> EntityMapper.toRecognitionTypeResponse(t, employeeRepo)).collect(Collectors.toList());
         }
-        return repo.findAll().stream().map(EntityMapper::toRecognitionTypeResponse).collect(Collectors.toList());
+        return repo.findAll().stream().map(t -> EntityMapper.toRecognitionTypeResponse(t, employeeRepo)).collect(Collectors.toList());
     }
 }
