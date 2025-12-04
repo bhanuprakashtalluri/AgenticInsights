@@ -43,3 +43,24 @@ management:
     web:
       exposure:
         include: "health,info"
+
+springai:
+  groq:
+    api-key: ${api_key}
+    base-url: https://api.groq.com/openai/v1
+    model: openai/gpt-oss-20b
+  embeddings:
+    provider: pinecone
+    api-key: ${pinecone_key}
+    environment: us-east1-gcp
+    project: myteam-recognitions
+    index: recognitions-embeddings
+  cache:
+    type: caffeine
+    spec: maximumSize=500,expireAfterWrite=10m
+  audit:
+    enabled: true
+    datasource:
+      url: ${SPRING_DATASOURCE_URL}
+      username: ${SPRING_DATASOURCE_USERNAME}
+      password: ${SPRING_DATASOURCE_PASSWORD}

@@ -11,6 +11,9 @@ import org.example.service.RecognitionToonExporter;
 import org.example.service.ChartService;
 import org.example.service.FileStorageService;
 import org.example.util.EntityMapper;
+import org.example.service.JwtService;
+import org.example.dto.RecognitionChartDTO;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -19,6 +22,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import jakarta.servlet.http.HttpServletRequest;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.time.Instant;
@@ -41,6 +45,11 @@ public class RecognitionController {
     private final RecognitionToonExporter toonExporter;
     private final ChartService chartService;
     private final FileStorageService fileStorageService;
+
+    @Autowired
+    private JwtService jwtService;
+    @Autowired
+    private org.example.service.AuditLogService auditLogService;
 
     private static final String CSV_DIR = "artifacts/exports/csv/";
     private static final String JSON_DIR = "artifacts/exports/json/";
@@ -102,42 +111,92 @@ public class RecognitionController {
     }
 
     @GetMapping
-    public Page<RecognitionResponse> list(@RequestParam(defaultValue = "0") int page,
-                                  @RequestParam(defaultValue = "20") int size,
-                                  @RequestParam(required = false) Long recipientId,
-                                  @RequestParam(required = false) Long senderId,
-                                  @RequestParam(required = false) UUID recipientUuid,
-                                  @RequestParam(required = false) UUID senderUuid) {
+    public List<RecognitionResponse> list(@RequestParam(defaultValue = "0") int page,
+                              @RequestParam(defaultValue = "20") int size,
+                              @RequestParam(required = false) Long recipientId,
+                              @RequestParam(required = false) Long senderId,
+                              @RequestParam(required = false) UUID recipientUuid,
+                              @RequestParam(required = false) UUID senderUuid,
+                              HttpServletRequest request) {
+        boolean isAdmin = hasRole(request, "ADMIN");
+        boolean isManager = hasRole(request, "MANAGER");
+        boolean isTeamleader = hasRole(request, "TEAMLEADER");
+        boolean isEmployee = hasRole(request, "EMPLOYEE");
+        String username = getUsername(request);
+        if (!(isAdmin || isManager || isTeamleader || isEmployee)) {
+            auditLogService.log(username, "LIST_DENIED", "/recognitions: No valid role");
+            return java.util.Collections.emptyList();
+        }
         Pageable p = PageRequest.of(page, size);
         Page<Recognition> pageResult;
-        if (recipientUuid != null) {
-            pageResult = employeeRepository.findByUuid(recipientUuid).map(e -> recognitionRepository.findAllByRecipientId(e.getId(), p)).orElseGet(() -> recognitionRepository.findAllWithRelations(Pageable.unpaged()));
-        } else if (senderUuid != null) {
-            pageResult = employeeRepository.findByUuid(senderUuid).map(e -> recognitionRepository.findAllBySenderId(e.getId(), p)).orElseGet(() -> recognitionRepository.findAllWithRelations(Pageable.unpaged()));
-        } else if (recipientId != null) pageResult = recognitionRepository.findAllByRecipientId(recipientId, p);
-        else if (senderId != null) pageResult = recognitionRepository.findAllBySenderId(senderId, p);
-        else pageResult = recognitionRepository.findAllWithRelations(p);
-        return pageResult.map(EntityMapper::toRecognitionResponse);
+        if (isEmployee && !isAdmin && !isManager && !isTeamleader) {
+            // Employees only see their own recognitions
+            // Assume username is mapped to senderId/recipientId
+            try {
+                Long userId = Long.parseLong(username);
+                pageResult = recognitionRepository.findAllBySenderId(userId, p);
+            } catch (Exception e) {
+                auditLogService.log(username, "LIST_DENIED", "/recognitions: Employee ID parse error");
+                return java.util.Collections.emptyList();
+            }
+        } else {
+            if (recipientUuid != null) {
+                pageResult = employeeRepository.findByUuid(recipientUuid).map(e -> recognitionRepository.findAllByRecipientId(e.getId(), p)).orElseGet(() -> recognitionRepository.findAllWithRelations(Pageable.unpaged()));
+            } else if (senderUuid != null) {
+                pageResult = employeeRepository.findByUuid(senderUuid).map(e -> recognitionRepository.findAllBySenderId(e.getId(), p)).orElseGet(() -> recognitionRepository.findAllWithRelations(Pageable.unpaged()));
+            } else if (recipientId != null) pageResult = recognitionRepository.findAllByRecipientId(recipientId, p);
+            else if (senderId != null) pageResult = recognitionRepository.findAllBySenderId(senderId, p);
+            else pageResult = recognitionRepository.findAllWithRelations(p);
+        }
+        return pageResult.stream().map(EntityMapper::toRecognitionResponse).toList();
     }
 
     // Unified get by ID or UUID (as request parameters)
     @GetMapping("/single")
-    public ResponseEntity<?> getByIdOrUuid(@RequestParam(required = false) Long id, @RequestParam(required = false) UUID uuid) {
-        Optional<Recognition> opt = Optional.empty();
-        if (id != null) opt = recognitionRepository.findByIdWithRelations(id);
-        else if (uuid != null) opt = recognitionRepository.findByUuidWithRelations(uuid);
-        if (opt.isEmpty()) return ResponseEntity.notFound().build();
-        return ResponseEntity.ok(EntityMapper.toRecognitionResponse(opt.get()));
-    }
-
-    // Unified update by ID or UUID (as request parameters)
-    @PutMapping("/single")
-    public ResponseEntity<?> update(@RequestParam(required = false) Long id, @RequestParam(required = false) UUID uuid, @RequestBody Recognition req) {
+    public ResponseEntity<?> getByIdOrUuid(@RequestParam(required = false) Long id, @RequestParam(required = false) UUID uuid, HttpServletRequest request) {
+        boolean isAdmin = hasRole(request, "ADMIN");
+        boolean isManager = hasRole(request, "MANAGER");
+        boolean isTeamleader = hasRole(request, "TEAMLEADER");
+        boolean isEmployee = hasRole(request, "EMPLOYEE");
+        String username = getUsername(request);
+        if (!(isAdmin || isManager || isTeamleader || isEmployee)) {
+            auditLogService.log(username, "GET_DENIED", "/recognitions/single: No valid role");
+            return ResponseEntity.status(403).body(Map.of("error", "No valid role"));
+        }
         Optional<Recognition> opt = Optional.empty();
         if (id != null) opt = recognitionRepository.findByIdWithRelations(id);
         else if (uuid != null) opt = recognitionRepository.findByUuidWithRelations(uuid);
         if (opt.isEmpty()) return ResponseEntity.notFound().build();
         Recognition r = opt.get();
+        if (isEmployee && !isAdmin && !isManager && !isTeamleader) {
+            // Employees can only view recognitions they sent or received
+            try {
+                Long userId = Long.parseLong(username);
+                if (!userId.equals(r.getSenderId()) && !userId.equals(r.getRecipientId())) {
+                    auditLogService.log(username, "GET_DENIED", "/recognitions/single: Employee not sender/recipient");
+                    return ResponseEntity.status(403).body(Map.of("error", "Employees can only view their own recognitions."));
+                }
+            } catch (Exception e) {
+                auditLogService.log(username, "GET_DENIED", "/recognitions/single: Employee ID parse error");
+                return ResponseEntity.status(403).body(Map.of("error", "Employee ID parse error"));
+            }
+        }
+        return ResponseEntity.ok(EntityMapper.toRecognitionResponse(r));
+    }
+
+    // Unified update by ID or UUID (as request parameters)
+    @PutMapping("/single")
+    public ResponseEntity<?> update(@RequestParam(required = false) Long id, @RequestParam(required = false) UUID uuid, @RequestBody Recognition req, HttpServletRequest request) {
+        Optional<Recognition> opt = Optional.empty();
+        if (id != null) opt = recognitionRepository.findByIdWithRelations(id);
+        else if (uuid != null) opt = recognitionRepository.findByUuidWithRelations(uuid);
+        if (opt.isEmpty()) return ResponseEntity.notFound().build();
+        Recognition r = opt.get();
+        Long managerId = getAuthenticatedUserId(request);
+        if (!isManagerOfRecognition(r, managerId)) {
+            auditLogService.log(managerId != null ? managerId.toString() : "UNKNOWN", "UPDATE_DENIED", "Not manager of recipient");
+            return ResponseEntity.status(403).body(Map.of("error", "Only the manager of the respective employee can update this recognition."));
+        }
         // Update fields
         if (req.getCategory() != null) r.setCategory(req.getCategory());
         if (req.getLevel() != null) r.setLevel(req.getLevel());
@@ -187,23 +246,34 @@ public class RecognitionController {
 
     // Unified delete by ID or UUID (as request parameters)
     @DeleteMapping("/single")
-    public ResponseEntity<?> delete(@RequestParam(required = false) Long id, @RequestParam(required = false) UUID uuid) {
-        Optional<Recognition> opt = Optional.empty();
-        if (id != null) opt = recognitionRepository.findByIdWithRelations(id);
-        else if (uuid != null) opt = recognitionRepository.findByUuidWithRelations(uuid);
-        if (opt.isEmpty()) return ResponseEntity.notFound().build();
-        recognitionRepository.deleteById(opt.get().getId());
-        return ResponseEntity.noContent().build();
-    }
-
-    // Unified approve by ID or UUID (as request parameters)
-    @PatchMapping("/approve")
-    public ResponseEntity<?> approve(@RequestParam(required = false) Long id, @RequestParam(required = false) UUID uuid, @RequestBody(required = false) org.example.dto.ApprovalRequest body, @RequestParam(required = false) Long approverId) {
+    public ResponseEntity<?> delete(@RequestParam(required = false) Long id, @RequestParam(required = false) UUID uuid, HttpServletRequest request) {
         Optional<Recognition> opt = Optional.empty();
         if (id != null) opt = recognitionRepository.findByIdWithRelations(id);
         else if (uuid != null) opt = recognitionRepository.findByUuidWithRelations(uuid);
         if (opt.isEmpty()) return ResponseEntity.notFound().build();
         Recognition r = opt.get();
+        Long managerId = getAuthenticatedUserId(request);
+        if (!isManagerOfRecognition(r, managerId)) {
+            auditLogService.log(managerId != null ? managerId.toString() : "UNKNOWN", "DELETE_DENIED", "Not manager of recipient");
+            return ResponseEntity.status(403).body(Map.of("error", "Only the manager of the respective employee can delete this recognition."));
+        }
+        recognitionRepository.deleteById(r.getId());
+        return ResponseEntity.noContent().build();
+    }
+
+    // Unified approve by ID or UUID (as request parameters)
+    @PatchMapping("/approve")
+    public ResponseEntity<?> approve(@RequestParam(required = false) Long id, @RequestParam(required = false) UUID uuid, @RequestBody(required = false) org.example.dto.ApprovalRequest body, @RequestParam(required = false) Long approverId, HttpServletRequest request) {
+        Optional<Recognition> opt = Optional.empty();
+        if (id != null) opt = recognitionRepository.findByIdWithRelations(id);
+        else if (uuid != null) opt = recognitionRepository.findByUuidWithRelations(uuid);
+        if (opt.isEmpty()) return ResponseEntity.notFound().build();
+        Recognition r = opt.get();
+        Long managerId = getAuthenticatedUserId(request);
+        if (!isManagerOfRecognition(r, managerId)) {
+            auditLogService.log(managerId != null ? managerId.toString() : "UNKNOWN", "APPROVE_DENIED", "Not manager of recipient");
+            return ResponseEntity.status(403).body(Map.of("error", "Only the manager of the respective employee can approve this recognition."));
+        }
         r.setApprovalStatus("APPROVED");
         r.setRejectionReason(null);
         recognitionRepository.save(r);
@@ -213,12 +283,17 @@ public class RecognitionController {
 
     // Unified reject by ID or UUID (as request parameters)
     @PatchMapping("/reject")
-    public ResponseEntity<?> reject(@RequestParam(required = false) Long id, @RequestParam(required = false) UUID uuid, @RequestBody(required = false) org.example.dto.ApprovalRequest body, @RequestParam(required = false) String reason, @RequestParam(required = false) Long approverId) {
+    public ResponseEntity<?> reject(@RequestParam(required = false) Long id, @RequestParam(required = false) UUID uuid, @RequestBody(required = false) org.example.dto.ApprovalRequest body, @RequestParam(required = false) String reason, @RequestParam(required = false) Long approverId, HttpServletRequest request) {
         Optional<Recognition> opt = Optional.empty();
         if (id != null) opt = recognitionRepository.findByIdWithRelations(id);
         else if (uuid != null) opt = recognitionRepository.findByUuidWithRelations(uuid);
         if (opt.isEmpty()) return ResponseEntity.notFound().build();
         Recognition r = opt.get();
+        Long managerId = getAuthenticatedUserId(request);
+        if (!isManagerOfRecognition(r, managerId)) {
+            auditLogService.log(managerId != null ? managerId.toString() : "UNKNOWN", "REJECT_DENIED", "Not manager of recipient");
+            return ResponseEntity.status(403).body(Map.of("error", "Only the manager of the respective employee can reject this recognition."));
+        }
         String usedReason = (body != null && body.reason != null) ? body.reason : reason;
         if (usedReason == null || usedReason.isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "reason is required to reject a recognition"));
@@ -233,27 +308,39 @@ public class RecognitionController {
     // --- Search ---
     @GetMapping("/search")
     public Page<RecognitionResponse> search(@RequestParam(required = false) Long id,
-                                            @RequestParam(required = false) UUID uuid,
-                                            @RequestParam(required = false) String name,
-                                            @RequestParam(required = false) Long unitId,
-                                            @RequestParam(required = false) Long typeId,
-                                            @RequestParam(required = false) Integer points,
-                                            @RequestParam(required = false) String role,
-                                            @RequestParam(required = false) String status,
-                                            @RequestParam(required = false) String category,
-                                            @RequestParam(defaultValue = "0") int page,
-                                            @RequestParam(defaultValue = "20") int size) {
-        Pageable p = PageRequest.of(page, size);
-        if (id != null) {
-            Optional<Recognition> rec = recognitionRepository.findById(id);
-            return rec.map(r -> new org.springframework.data.domain.PageImpl<>(List.of(EntityMapper.toRecognitionResponse(r)), p, 1))
-                    .orElseGet(() -> new org.springframework.data.domain.PageImpl<>(List.of(), p, 0));
-        } else if (uuid != null) {
-            Optional<Recognition> rec = recognitionRepository.findByUuid(uuid);
-            return rec.map(r -> new org.springframework.data.domain.PageImpl<>(List.of(EntityMapper.toRecognitionResponse(r)), p, 1))
-                    .orElseGet(() -> new org.springframework.data.domain.PageImpl<>(List.of(), p, 0));
+                                        @RequestParam(required = false) UUID uuid,
+                                        @RequestParam(required = false) String name,
+                                        @RequestParam(required = false) Long unitId,
+                                        @RequestParam(required = false) Long typeId,
+                                        @RequestParam(required = false) Integer points,
+                                        @RequestParam(required = false) String role,
+                                        @RequestParam(required = false) String status,
+                                        @RequestParam(required = false) String category,
+                                        @RequestParam(defaultValue = "0") int page,
+                                        @RequestParam(defaultValue = "20") int size,
+                                        HttpServletRequest request) {
+    boolean isAdmin = hasRole(request, "ADMIN");
+    boolean isManager = hasRole(request, "MANAGER");
+    boolean isTeamleader = hasRole(request, "TEAMLEADER");
+    boolean isEmployee = hasRole(request, "EMPLOYEE");
+    String username = getUsername(request);
+    if (!(isAdmin || isManager || isTeamleader || isEmployee)) {
+        auditLogService.log(username, "SEARCH_DENIED", "/recognitions/search: No valid role");
+        return Page.empty();
+    }
+    Pageable p = PageRequest.of(page, size);
+    if (isEmployee && !isAdmin && !isManager && !isTeamleader) {
+        // Employees only see their own recognitions
+        try {
+            Long userId = Long.parseLong(username);
+            Page<Recognition> pageResult = recognitionRepository.findAllBySenderId(userId, p);
+            return pageResult.map(EntityMapper::toRecognitionResponse);
+        } catch (Exception e) {
+            auditLogService.log(username, "SEARCH_DENIED", "/recognitions/search: Employee ID parse error");
+            return Page.empty();
         }
-        List<Recognition> filtered = recognitionRepository.findAllWithRelations(Pageable.unpaged()).getContent();
+    }
+    List<Recognition> filtered = recognitionRepository.findAllWithRelations(Pageable.unpaged()).getContent();
         if (name != null && !name.isBlank()) filtered = filtered.stream().filter(r -> r.getCategory() != null && r.getCategory().toLowerCase().contains(name.toLowerCase())).toList();
         if (unitId != null && !isAll(unitId)) filtered = filtered.stream().filter(r -> r.getRecipient() != null && unitId.equals(r.getRecipient().getUnitId())).toList();
         if (typeId != null && !isAll(typeId)) filtered = filtered.stream().filter(r -> r.getRecognitionType() != null && typeId.equals(r.getRecognitionType().getId())).toList();
@@ -435,28 +522,75 @@ public class RecognitionController {
     // Unified export endpoint
     @GetMapping("/export")
     public ResponseEntity<?> export(@RequestParam String format,
-                                    @RequestParam(required = false) Long recipientId,
-                                    @RequestParam(required = false) Long senderId,
-                                    @RequestParam(required = false) String role,
-                                    @RequestParam(required = false) String status,
-                                    @RequestParam(required = false) String category,
-                                    @RequestParam(required = false) Long managerId,
-                                    @RequestParam(required = false) Long days) {
-        switch (format.toLowerCase()) {
-            case "csv" -> {
-                return exportCsv(recipientId, senderId, role, status, category, managerId, days);
+                               @RequestParam(required = false) Long recipientId,
+                               @RequestParam(required = false) Long senderId,
+                               @RequestParam(required = false) String role,
+                               @RequestParam(required = false) String status,
+                               @RequestParam(required = false) String category,
+                               @RequestParam(required = false) Long managerId,
+                               @RequestParam(required = false) Long days,
+                               HttpServletRequest request) {
+    boolean isAdmin = isAdmin(request);
+    boolean isManager = hasRole(request, "MANAGER");
+    boolean isTeamleader = hasRole(request, "TEAMLEADER");
+    String username = getUsername(request);
+    List<Recognition> filteredList;
+    if (isAdmin) {
+        // Admin: no restriction
+        filteredList = recognitionRepository.findAllWithRelations(Pageable.unpaged()).getContent();
+    } else if (isManager) {
+        Long unitId = getUnitIdForManager(request);
+        if (unitId == null) {
+            auditLogService.log(username, "EXPORT_DENIED", "/recognitions/export: Manager unitId missing");
+            return ResponseEntity.status(403).body(Map.of("error", "Manager unitId missing"));
+        }
+        filteredList = recognitionRepository.findAllWithRelations(Pageable.unpaged()).getContent().stream()
+            .filter(r -> r.getRecipient() != null && unitId.equals(r.getRecipient().getUnitId()))
+            .toList();
+    } else if (isTeamleader) {
+        Long teamId = getTeamIdForTeamleader(request);
+        if (teamId == null) {
+            auditLogService.log(username, "EXPORT_DENIED", "/recognitions/export: Teamleader teamId missing");
+            return ResponseEntity.status(403).body(Map.of("error", "Teamleader teamId missing"));
+        }
+        // Teamleader filtering for export
+        filteredList = recognitionRepository.findAllWithRelations(Pageable.unpaged()).getContent().stream()
+            .filter(r -> r.getRecipient() != null && r.getRecipient().getManagerId() != null && teamId.equals(r.getRecipient().getManagerId()))
+            .toList();
+    } else {
+        auditLogService.log(username, "EXPORT_DENIED", "/recognitions/export: No valid role");
+        return ResponseEntity.status(403).body(Map.of("error", "No valid role for export"));
+    }
+    switch (format.toLowerCase()) {
+        case "csv" -> {
+            byte[] bytes;
+            try {
+                bytes = csvExporter.export(filteredList);
+            } catch (Exception e) {
+                auditLogService.log(username, "EXPORT_ERROR", "/recognitions/export: CSV export failed");
+                return ResponseEntity.status(500).body(("CSV export failed: " + e.getMessage()).getBytes());
             }
-            case "json" -> {
-                return exportJson(recipientId, senderId, role, status, category, managerId, days);
-            }
-            case "toon" -> {
-                return exportToon(recipientId, senderId, role, status, category, managerId, days);
-            }
-            default -> {
-                return ResponseEntity.badRequest().body(Map.of("error", "Invalid format: " + format));
-            }
+            return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=recognitions_export.csv")
+                .contentType(MediaType.parseMediaType("text/csv"))
+                .body(bytes);
+        }
+        case "json" -> {
+            List<RecognitionResponse> resp = filteredList.stream().map(EntityMapper::toRecognitionResponse).toList();
+            return ResponseEntity.ok(resp);
+        }
+        case "toon" -> {
+            byte[] bytes = toonExporter.export(filteredList);
+            return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=recognitions_export.toon")
+                .contentType(MediaType.parseMediaType("application/octet-stream"))
+                .body(bytes);
+        }
+        default -> {
+            return ResponseEntity.badRequest().body(Map.of("error", "Invalid format: " + format));
         }
     }
+}
 
     // --- Graph ---
     @GetMapping(value = "/graph", produces = MediaType.IMAGE_PNG_VALUE)
@@ -473,60 +607,70 @@ public class RecognitionController {
             @RequestParam(required = false) Integer points,
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String type,
-            @RequestParam(required = false, defaultValue = "days") String groupBy, // days, weeks, months, years
-            @RequestParam(required = false, defaultValue = "10") Integer iterations // e.g. 10 weeks
-    ) throws Exception {
-        java.time.Instant now = java.time.Instant.now();
-        java.time.ZoneId zone = java.time.ZoneOffset.UTC;
-        java.time.LocalDate today = java.time.LocalDate.now(zone);
-        java.time.Instant from;
-        // Calculate 'from' based on groupBy
-        switch (groupBy.toLowerCase()) {
-            case "weeks" -> from = today.minusWeeks(iterations - 1L).atStartOfDay(zone).toInstant();
-            case "months" -> from = today.minusMonths(iterations - 1L).withDayOfMonth(1).atStartOfDay(zone).toInstant();
-            case "years" -> from = today.minusYears(iterations - 1L).withDayOfYear(1).atStartOfDay(zone).toInstant();
-            default -> from = today.minusDays(iterations - 1L).atStartOfDay(zone).toInstant();
+            @RequestParam(required = false, defaultValue = "days") String groupBy,
+            @RequestParam(required = false, defaultValue = "10") Integer iterations,
+            HttpServletRequest request) throws Exception {
+        boolean isManager = hasRole(request, "MANAGER");
+        boolean isTeamleader = hasRole(request, "TEAMLEADER");
+        String username = getUsername(request);
+        List<Recognition> allRecognitions = recognitionRepository.findAllWithRelations(Pageable.unpaged()).getContent();
+        if (isManager) {
+            Long managerUnitId = getUnitIdForManager(request);
+            if (managerUnitId == null) {
+                auditLogService.log(username, "GRAPH_DENIED", "/recognitions/graph: Manager unitId missing");
+                return ResponseEntity.status(403).body(null);
+            }
+            allRecognitions = allRecognitions.stream().filter(r -> r.getRecipient() != null && managerUnitId.equals(r.getRecipient().getUnitId())).toList();
         }
-        // 2. Fetch recognitions in window (lite projection)
-        java.util.List<org.example.repository.RecognitionLite> lites = recognitionRepository.findAllLiteBetween(from, now);
-        // 3. Filter by params (same as before)
-        java.util.List<org.example.repository.RecognitionLite> filtered = lites.stream()
+        if (isTeamleader) {
+            Long teamId = getTeamIdForTeamleader(request);
+            if (teamId == null) {
+                auditLogService.log(username, "GRAPH_DENIED", "/recognitions/graph: Teamleader teamId missing");
+                return ResponseEntity.status(403).body(null);
+            }
+            allRecognitions = allRecognitions.stream().filter(r -> r.getRecipient() != null && teamId.equals(r.getRecipient().getManagerId())).toList();
+        }
+        // Filter by params
+        List<Recognition> filtered = allRecognitions.stream()
             .filter(r -> id == null || r.getRecipientId() != null && r.getRecipientId().equals(id))
-            .filter(r -> uuid == null)
-            .filter(r -> unitId == null || unitId.toString().equalsIgnoreCase("all") || r.getRecipientId() != null)
+            .filter(r -> unitId == null || unitId.toString().equalsIgnoreCase("all") || r.getRecipient() != null && unitId.equals(r.getRecipient().getUnitId()))
             .filter(r -> role == null || role.equalsIgnoreCase("all") || (r.getLevel() != null && r.getLevel().equalsIgnoreCase(role)))
             .filter(r -> points == null || points.toString().equalsIgnoreCase("all") || (r.getAwardPoints() != null && r.getAwardPoints().equals(points)))
             .filter(r -> status == null || status.equalsIgnoreCase("all") || (r.getApprovalStatus() != null && r.getApprovalStatus().equalsIgnoreCase(status)))
             .toList();
-        // 4. Group by time bucket
+        // Map to DTOs
+        List<RecognitionChartDTO> chartData = filtered.stream()
+            .map(r -> new RecognitionChartDTO(r.getSentAt(), r.getAwardPoints(), r.getRecipientId(), r.getSenderId(), r.getApprovalStatus(), r.getLevel()))
+            .toList();
+        // Group by time bucket
         java.util.Map<String, Integer> timeSeries = new java.util.LinkedHashMap<>();
         for (int i = iterations - 1; i >= 0; i--) {
             String label;
             java.time.LocalDate bucketDate;
             switch (groupBy.toLowerCase()) {
                 case "weeks" -> {
-                    bucketDate = today.minusWeeks(i);
+                    bucketDate = java.time.LocalDate.now().minusWeeks(i);
                     label = bucketDate.with(java.time.DayOfWeek.MONDAY).toString();
                 }
                 case "months" -> {
-                    bucketDate = today.minusMonths(i).withDayOfMonth(1);
+                    bucketDate = java.time.LocalDate.now().minusMonths(i).withDayOfMonth(1);
                     label = bucketDate.toString();
                 }
                 case "years" -> {
-                    bucketDate = today.minusYears(i).withDayOfYear(1);
+                    bucketDate = java.time.LocalDate.now().minusYears(i).withDayOfYear(1);
                     label = String.valueOf(bucketDate.getYear());
                 }
                 default -> {
-                    bucketDate = today.minusDays(i);
+                    bucketDate = java.time.LocalDate.now().minusDays(i);
                     label = bucketDate.toString();
                 }
             }
             timeSeries.put(label, 0);
         }
-        for (org.example.repository.RecognitionLite r : filtered) {
+        for (RecognitionChartDTO r : chartData) {
             java.time.Instant sent = r.getSentAt();
             if (sent == null) continue;
-            java.time.LocalDate sentDate = sent.atZone(zone).toLocalDate();
+            java.time.LocalDate sentDate = sent.atZone(java.time.ZoneOffset.UTC).toLocalDate();
             String label;
             switch (groupBy.toLowerCase()) {
                 case "weeks" -> label = sentDate.with(java.time.DayOfWeek.MONDAY).toString();
@@ -537,9 +681,8 @@ public class RecognitionController {
             timeSeries.computeIfPresent(label, (k, v) -> v + 1);
         }
         String title = "Recognitions";
-        String xLabel = groupBy;
         String yLabel = "count";
-        byte[] png = chartService.renderTimeSeriesChart(timeSeries, title, xLabel, yLabel);
+        byte[] png = chartService.renderTimeSeriesChart(timeSeries, title, groupBy, yLabel);
         String fname = "recognition_graph-" + java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("dd-MM-yyyy-HH.mm")) + ".png";
         fileStorageService.storeGraph(fname, png);
         return ResponseEntity.ok().contentType(MediaType.IMAGE_PNG).body(png);
@@ -550,5 +693,77 @@ public class RecognitionController {
         if (param == null) return false;
         if (param instanceof String s) return s.equalsIgnoreCase("all");
         return false;
+    }
+
+    private Long getAuthenticatedUserId(HttpServletRequest request) {
+        String authHeader = request.getHeader("Authorization");
+        if (authHeader != null && authHeader.startsWith("Bearer ")) {
+            String token = authHeader.substring(7);
+            String username = jwtService.getUsername(token);
+            // You may need to fetch user by username to get their ID
+            // For now, assume username is the manager's unique identifier
+            // TODO: Replace with actual user lookup if needed
+            try {
+                return Long.parseLong(username);
+            } catch (Exception e) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private boolean isManagerOfRecognition(Recognition recognition, Long managerId) {
+        if (recognition == null || recognition.getRecipient() == null) return false;
+        return recognition.getRecipient().getManagerId() != null && recognition.getRecipient().getManagerId().equals(managerId);
+    }
+
+    private boolean isAdmin(HttpServletRequest request) {
+        String authHeader = request.getHeader("Authorization");
+        if (authHeader != null && authHeader.startsWith("Bearer ")) {
+            String token = authHeader.substring(7);
+            java.util.Set<String> roles = jwtService.getRoles(token);
+            return roles != null && roles.contains("ADMIN");
+        }
+        return false;
+    }
+
+    private boolean hasRole(HttpServletRequest request, String role) {
+        String authHeader = request.getHeader("Authorization");
+        if (authHeader != null && authHeader.startsWith("Bearer ")) {
+            String token = authHeader.substring(7);
+            java.util.Set<String> roles = jwtService.getRoles(token);
+            return roles != null && roles.contains(role);
+        }
+        return false;
+    }
+
+    private String getUsername(HttpServletRequest request) {
+        String authHeader = request.getHeader("Authorization");
+        if (authHeader != null && authHeader.startsWith("Bearer ")) {
+            String token = authHeader.substring(7);
+            return jwtService.getUsername(token);
+        }
+        return "UNKNOWN";
+    }
+
+    private Long getTeamIdForTeamleader(HttpServletRequest request) {
+        // TODO: Implement actual lookup from JWT or user service
+        // For now, assume username is teamleader's unique ID and maps to teamId
+        String username = getUsername(request);
+        try {
+            return Long.parseLong(username); // Replace with actual teamId lookup
+        } catch (Exception e) {
+            return null;
+        }
+    }
+    private Long getUnitIdForManager(HttpServletRequest request) {
+        // TODO: Implement actual lookup from JWT or user service
+        // For now, assume username is manager's unique ID and maps to unitId
+        String username = getUsername(request);
+        try {
+            return Long.parseLong(username); // Replace with actual unitId lookup
+        } catch (Exception e) {
+            return null;
+        }
     }
 }

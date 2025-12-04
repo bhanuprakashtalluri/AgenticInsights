@@ -1,6 +1,15 @@
 -- Clean, precise schema for recognitions app
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
+-- Create user table if not exists
+CREATE TABLE IF NOT EXISTS "user" (
+  id BIGSERIAL PRIMARY KEY,
+  username VARCHAR(100) NOT NULL UNIQUE,
+  password VARCHAR(255) NOT NULL,
+  roles TEXT[] NOT NULL,
+  refresh_token VARCHAR(255)
+);
+
 CREATE TABLE IF NOT EXISTS employee (
   id BIGSERIAL PRIMARY KEY,
   uuid UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,

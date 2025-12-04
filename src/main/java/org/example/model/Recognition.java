@@ -1,5 +1,6 @@
 package org.example.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import java.time.Instant;
 import java.util.UUID;
@@ -17,6 +18,7 @@ public class Recognition {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "recognition_type_id")
+    @JsonIgnore
     private RecognitionType recognitionType;
 
     @Column(name = "category")
@@ -33,10 +35,12 @@ public class Recognition {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "recipient_id")
+    @JsonIgnore
     private Employee recipient;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "sender_id")
+    @JsonIgnore
     private Employee sender;
 
     @Column(name = "sent_at")

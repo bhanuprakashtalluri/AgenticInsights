@@ -78,4 +78,7 @@ public interface RecognitionRepository extends JpaRepository<Recognition, Long> 
 
     @Query(value = "SELECT COUNT(DISTINCT r.recipient_id) FROM recognitions r WHERE r.recipient_id IS NOT NULL AND r.sent_at BETWEEN :from AND :to AND (:role IS NULL OR EXISTS (SELECT 1 FROM employee e WHERE e.id = r.recipient_id AND e.role = :role)) AND (:unitId IS NULL OR EXISTS (SELECT 1 FROM employee e WHERE e.id = r.recipient_id AND e.unit_id = :unitId)) AND (:managerId IS NULL OR EXISTS (SELECT 1 FROM employee e WHERE e.id = r.recipient_id AND e.manager_id = :managerId))", nativeQuery = true)
     int countTopRecipientsNativeFiltered(@Param("from") Instant from, @Param("to") Instant to, @Param("role") String role, @Param("unitId") Long unitId, @Param("managerId") Long managerId);
+
+    @Query("SELECT r FROM Recognition r")
+    List<Recognition> findAllRecognitions();
 }

@@ -1,5 +1,6 @@
 package org.example.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import java.time.Instant;
 import java.util.UUID;
@@ -24,6 +25,11 @@ public class RecognitionType {
     @Column(name = "created_at")
     private Instant createdAt;
 
+    // Prevent circular reference serialization issues
+    @OneToMany(mappedBy = "recognitionType")
+    @JsonIgnore
+    private java.util.List<Recognition> recognitions;
+
     public RecognitionType() {
     }
 
@@ -41,5 +47,9 @@ public class RecognitionType {
 
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
-}
 
+    // If you have a field like:
+    // @OneToMany(mappedBy = "recognitionType")
+    // @JsonIgnore
+    // private List<Recognition> recognitions;
+}

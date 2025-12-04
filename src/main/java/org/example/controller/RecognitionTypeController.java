@@ -36,11 +36,17 @@ public class RecognitionTypeController {
     }
 
     @GetMapping
-    public List<RecognitionTypeResponse> list(@RequestParam(required = false) String name) {
+    public org.springframework.data.domain.Page<RecognitionTypeResponse> list(@RequestParam(defaultValue = "0") int page,
+                                                                              @RequestParam(defaultValue = "20") int size,
+                                                                              @RequestParam(required = false) String name) {
+        org.springframework.data.domain.Pageable p = org.springframework.data.domain.PageRequest.of(page, size);
+        org.springframework.data.domain.Page<RecognitionType> pageResult;
         if (name != null && !isAll(name) && !name.isBlank()) {
-            return repo.findByTypeNameContainingIgnoreCase(name).stream().map(EntityMapper::toRecognitionTypeResponse).collect(Collectors.toList());
+            pageResult = repo.findByTypeNameContainingIgnoreCase(name, p);
+        } else {
+            pageResult = repo.findAll(p);
         }
-        return repo.findAll().stream().map(EntityMapper::toRecognitionTypeResponse).collect(Collectors.toList());
+        return pageResult.map(EntityMapper::toRecognitionTypeResponse);
     }
 
     // Unified get by ID or UUID (as request parameters)
