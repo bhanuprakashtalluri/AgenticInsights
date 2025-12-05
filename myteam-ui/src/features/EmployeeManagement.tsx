@@ -35,6 +35,11 @@ const EmployeeManagement: React.FC = () => {
   // Store all employees for global search/filtering
   const [allEmployees, setAllEmployees] = useState<any[]>([]);
 
+  const filterableKeys = ["role", "unitId", "managerId"];
+  const [filterField, setFilterField] = useState<string | null>(null);
+  const [filterValue, setFilterValue] = useState<string | null>(null);
+  const filterDropdownRef = React.useRef<HTMLDivElement | null>(null);
+
   const fetchEmployees = async (newPage = page, newPageSize = pageSize) => {
     setLoading(true);
     setError('');
@@ -154,27 +159,56 @@ const EmployeeManagement: React.FC = () => {
     fetchEmployees(0, newSize);
   };
 
-  // Filter employees by search query (global)
-  const getFilteredEmployees = () => {
-    const source = search.trim() ? allEmployees : employees;
-    if (!search.trim()) return source;
-    const q = search.trim().toLowerCase();
-    return source.filter(emp =>
-      [emp.firstName, emp.lastName, emp.email, emp.role, emp.unitId, emp.managerId, emp.joiningDate]
-        .map(val => (val ? String(val).toLowerCase() : ''))
-        .some(val => val.includes(q))
-    );
+  useEffect(() => {
+    if (!filterField) return;
+    function handleClickOutside(event: MouseEvent) {
+      if (
+        filterDropdownRef.current &&
+        !filterDropdownRef.current.contains(event.target as Node)
+      ) {
+        setFilterField(null); // Only close dropdown, do not clear filter value
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [filterField]);
+
+  const clearAllFilters = () => {
+    setFilterValue(null);
+    setFilterField(null);
   };
 
-  // Sorting logic (use filtered employees)
+  const getUniqueValues = (field: string) => {
+    return Array.from(new Set(allEmployees.map(emp => emp[field] || '-'))).filter(v => v !== undefined && v !== null);
+  };
+
+  // getFilteredEmployees should always use allEmployees
+  const getFilteredEmployees = () => {
+    let filtered = allEmployees;
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      filtered = filtered.filter(emp =>
+        [emp.firstName, emp.lastName, emp.email, emp.role, emp.unitId, emp.managerId, emp.joiningDate]
+          .map(val => (val ? String(val).toLowerCase() : ''))
+          .some(val => val.includes(q))
+      );
+    }
+    if (filterField && filterValue) {
+      filtered = filtered.filter(emp => (emp[filterField] || '-') === filterValue);
+    }
+    return filtered;
+  };
+
+  // getSortedEmployees should sort the filtered employees
   const getSortedEmployees = () => {
     return [...getFilteredEmployees()].sort((a, b) => {
       let aVal = a[sortField];
       let bVal = b[sortField];
       if (aVal === undefined || aVal === null) aVal = '';
       if (bVal === undefined || bVal === null) bVal = '';
-      // Numeric sort for managerId/unitId
-      if ((sortField === 'managerId' || sortField === 'unitId') && !isNaN(Number(aVal)) && !isNaN(Number(bVal))) {
+      if (["role", "unitId", "managerId", "joiningDate"].includes(sortField) && !isNaN(Number(aVal)) && !isNaN(Number(bVal))) {
         aVal = Number(aVal);
         bVal = Number(bVal);
       } else {
@@ -187,7 +221,7 @@ const EmployeeManagement: React.FC = () => {
     });
   };
 
-  // Paging logic for filtered/sorted employees
+  // getPagedEmployees should slice the sorted filtered employees
   const getPagedEmployees = () => {
     const sorted = getSortedEmployees();
     const total = Math.max(1, Math.ceil(sorted.length / pageSize));
@@ -258,23 +292,49 @@ const EmployeeManagement: React.FC = () => {
               {sortableColumns.map(col => (
                 <th
                   key={col.key}
-                  style={{ padding: 8, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}
+                  style={{ padding: 8, userSelect: 'none', whiteSpace: 'nowrap', position: 'relative', cursor: (filterableKeys.includes(col.key) ? 'pointer' : col.key === 'joiningDate' ? 'pointer' : 'default') }}
                   onClick={() => {
-                    if (sortField === col.key) {
-                      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+                    if (filterableKeys.includes(col.key)) {
+                      setFilterField(col.key);
+                    } else if (col.key === "joiningDate") {
+                      if (sortField === col.key) {
+                        setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+                      } else {
+                        setSortField(col.key);
+                        setSortOrder('asc');
+                      }
                     } else {
-                      setSortField(col.key);
-                      setSortOrder('asc');
+                      return;
                     }
                   }}
                 >
                   {col.label}
-                  {sortField === col.key ? (
-                    <span style={{ marginLeft: 4, color: '#000', fontWeight: 700, fontSize: '1rem', cursor: 'pointer' }}>
-                      {sortOrder === 'asc' ? '▲' : '▼'}
+                  {/* Add a circle for box-based filtering fields */}
+                  {filterableKeys.includes(col.key) && (
+                    <span style={{ color: '#000000', marginLeft: 6, fontSize: '1rem', verticalAlign: 'middle' }}>●</span>
+                  )}
+                  {/* Only show sort arrows for joiningDate (date) column */}
+                  {col.key === "joiningDate" && (
+                    <span style={{ marginLeft: 4, color: sortField === col.key ? '#bbb' : '#000', fontWeight: 700, fontSize: '1rem', cursor: 'pointer' }}>
+                      {sortField === col.key ? (sortOrder === 'asc' ? '▲' : '▼') : '▲▼'}
                     </span>
-                  ) : (
-                    <span style={{ marginLeft: 4, color: '#bbb', fontWeight: 700, fontSize: '1rem', cursor: 'pointer' }}>▲▼</span>
+                  )}
+                  {/* Dropdown for filterable fields only */}
+                  {filterField === col.key && filterableKeys.includes(col.key) && (
+                    <div ref={filterDropdownRef} style={{ position: 'fixed', bottom: 24, left: 32, background: '#fff', border: '1px solid #ccc', borderRadius: 6, zIndex: 1000, minWidth: 180, boxShadow: '0 2px 16px #b0b0b0', padding: 12 }}>
+                      <div style={{ marginBottom: 4, fontWeight: 600 }}>Filter {col.label}</div>
+                      <div style={{ maxHeight: 220, overflowY: 'auto' }}>
+                        {getUniqueValues(col.key).map(val => (
+                          <div key={val} style={{ padding: '6px 12px', cursor: 'pointer', background: filterValue === val ? '#e0e0e0' : '#fff', borderRadius: 4, marginBottom: 2 }}
+                            onClick={() => { setFilterValue(val); setFilterField(null); }}>
+                            {val}
+                          </div>
+                        ))}
+                      </div>
+                      <div style={{ marginTop: 6 }}>
+                        <button onClick={clearAllFilters} style={{ fontSize: '0.7rem', padding: '3px 8px', borderRadius: 4, border: '1px solid #888', background: '#f5f7fa', cursor: 'pointer' }}>Clear Filters</button>
+                      </div>
+                    </div>
                   )}
                 </th>
               ))}

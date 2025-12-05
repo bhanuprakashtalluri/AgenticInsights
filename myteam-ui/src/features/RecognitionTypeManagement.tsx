@@ -28,6 +28,11 @@ const RecognitionTypeManagement: React.FC = () => {
   const [createError, setCreateError] = useState('');
   const [createSuccess, setCreateSuccess] = useState('');
 
+  const filterableKeys = ["typeName"];
+  const [filterField, setFilterField] = useState<string | null>(null);
+  const [filterValue, setFilterValue] = useState<string | null>(null);
+  const filterDropdownRef = React.useRef<HTMLDivElement | null>(null);
+
   const fetchTypes = async (newPage = page, newPageSize = pageSize) => {
     setLoading(true);
     setError('');
@@ -66,13 +71,35 @@ const RecognitionTypeManagement: React.FC = () => {
     fetchAllTypes();
   }, []);
 
+  useEffect(() => {
+    if (!filterField) return;
+    function handleClickOutside(event: MouseEvent) {
+      if (
+        filterDropdownRef.current &&
+        !filterDropdownRef.current.contains(event.target as Node)
+      ) {
+        setFilterField(null); // Only close dropdown, do not clear filter value
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [filterField]);
+
+  const sortableArrowKeys = ["id", "createdAt"];
+
   const sortTypes = (data: any[]) => {
     return [...data].sort((a, b) => {
       let aVal = a[sortField];
       let bVal = b[sortField];
+      if (sortField === 'createdAt') {
+        aVal = a.createdAt || 0;
+        bVal = b.createdAt || 0;
+      }
       if (aVal === undefined || aVal === null) aVal = '';
       if (bVal === undefined || bVal === null) bVal = '';
-      if (!isNaN(Number(aVal)) && !isNaN(Number(bVal))) {
+      if (["id", "createdAt"].includes(sortField)) {
         aVal = Number(aVal);
         bVal = Number(bVal);
       } else {
@@ -85,15 +112,31 @@ const RecognitionTypeManagement: React.FC = () => {
     });
   };
 
+  const clearAllFilters = () => {
+    setFilterValue(null);
+    setFilterField(null);
+  };
+
+  const getUniqueValues = (field: string) => {
+    const source = allTypes.length > 0 ? allTypes : types;
+    return Array.from(new Set(source.map(item => item[field] || '-'))).filter(v => v !== undefined && v !== null);
+  };
+
   const getFilteredTypes = () => {
-    const source = search.trim() ? allTypes : types;
-    if (!search.trim()) return types;
-    const q = search.trim().toLowerCase();
-    return source.filter(type =>
-      [type.id, type.typeName, type.createdBy, type.createdAt]
-        .map(val => (val !== undefined && val !== null ? String(val).toLowerCase() : ''))
-        .some(val => val.includes(q))
-    );
+    let source = search.trim() ? allTypes : types;
+    let filtered = source;
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      filtered = filtered.filter(item =>
+        [item.id, item.typeName, item.createdBy, item.createdAt]
+          .map(val => (val !== undefined && val !== null ? String(val).toLowerCase() : ''))
+          .some(val => val.includes(q))
+      );
+    }
+    if (filterField && filterValue) {
+      filtered = filtered.filter(item => (item[filterField] || '-') === filterValue);
+    }
+    return filtered;
   };
 
   const getPagedTypes = () => {
@@ -189,20 +232,50 @@ const RecognitionTypeManagement: React.FC = () => {
             {sortableColumns.map(col => (
               <th
                 key={col.key}
-                style={{ padding: 8, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}
+                style={{ padding: 8, cursor: (filterableKeys.includes(col.key) ? 'pointer' : sortableArrowKeys.includes(col.key) ? 'pointer' : 'default'), userSelect: 'none', whiteSpace: 'nowrap', position: 'relative' }}
                 onClick={() => {
-                  if (sortField === col.key) {
-                    setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+                  if (filterableKeys.includes(col.key)) {
+                    setFilterField(col.key);
+                  } else if (sortableArrowKeys.includes(col.key)) {
+                    if (sortField === col.key) {
+                      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+                    } else {
+                      setSortField(col.key);
+                      setSortOrder('asc');
+                    }
                   } else {
-                    setSortField(col.key);
-                    setSortOrder('asc');
+                    return;
                   }
                 }}
               >
                 {col.label}
-                <span style={{ marginLeft: 4, color: sortField === col.key ? '#000' : '#bbb', fontWeight: 700, fontSize: '1rem', cursor: 'pointer' }}>
-                  {sortField === col.key ? (sortOrder === 'asc' ? '▲' : '▼') : '▲▼'}
-                </span>
+                {/* Add a circle for box-based filtering fields */}
+                {filterableKeys.includes(col.key) && (
+                  <span style={{ color: '#1976d2', marginLeft: 6, fontSize: '1rem', verticalAlign: 'middle' }}>●</span>
+                )}
+                {/* Only show sort arrows for id and createdAt columns */}
+                {sortableArrowKeys.includes(col.key) && (
+                  <span style={{ marginLeft: 4, color: sortField === col.key ? '#bbb' : '#050505', fontWeight: 700, fontSize: '1rem', cursor: 'pointer' }}>
+                    {sortField === col.key ? (sortOrder === 'asc' ? '▲' : '▼') : '▲▼'}
+                  </span>
+                )}
+                {/* Dropdown for filterable fields only */}
+                {filterField === col.key && filterableKeys.includes(col.key) && (
+                  <div ref={filterDropdownRef} style={{ position: 'fixed', bottom: 24, left: 32, background: '#fff', border: '1px solid #ccc', borderRadius: 6, zIndex: 1000, minWidth: 180, boxShadow: '0 2px 16px #b0b0b0', padding: 12 }}>
+                    <div style={{ marginBottom: 4, fontWeight: 600 }}>Filter {col.label}</div>
+                    <div style={{ maxHeight: 220, overflowY: 'auto' }}>
+                      {getUniqueValues(col.key).map(val => (
+                        <div key={val} style={{ padding: '6px 12px', cursor: 'pointer', background: filterValue === val ? '#e0e0e0' : '#fff', borderRadius: 4, marginBottom: 2 }}
+                          onClick={() => { setFilterValue(val); setFilterField(null); }}>
+                          {val}
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{ marginTop: 6 }}>
+                      <button onClick={clearAllFilters} style={{ fontSize: '0.7rem', padding: '3px 8px', borderRadius: 4, border: '1px solid #888', background: '#f5f7fa', cursor: 'pointer' }}>Clear Filters</button>
+                    </div>
+                  </div>
+                )}
               </th>
             ))}
           </tr>
