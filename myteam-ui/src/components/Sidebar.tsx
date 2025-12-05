@@ -8,7 +8,6 @@ const Sidebar: React.FC = () => (
       <Link to="/" style={{ color: '#fff', textDecoration: 'none', fontSize: '0.95rem', fontWeight: 500 }}>Dashboard</Link>
       <Link to="/employees" style={{ color: '#fff', textDecoration: 'none', fontSize: '0.95rem', fontWeight: 500 }}>Employees</Link>
       <Link to="/recognitions" style={{ color: '#fff', textDecoration: 'none', fontSize: '0.95rem', fontWeight: 500 }}>Recognitions</Link>
-      <Link to="/metrics" style={{ color: '#fff', textDecoration: 'none', fontSize: '0.95rem', fontWeight: 500 }}>Metrics</Link>
       <Link to="/leaderboard" style={{ color: '#fff', textDecoration: 'none', fontSize: '0.95rem', fontWeight: 500 }}>Leaderboard</Link>
       <Link to="/recognition-types" style={{ color: '#fff', textDecoration: 'none', fontSize: '0.95rem', fontWeight: 500 }}>Recognition Types</Link>
     </nav>

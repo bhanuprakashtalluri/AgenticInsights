@@ -13,7 +13,6 @@ const navItems = [
   { text: 'Recognitions', icon: <EmojiEventsIcon />, path: '/recognitions' },
   { text: 'Employees', icon: <PeopleIcon />, path: '/employees' },
   { text: 'Leaderboard', icon: <BarChartIcon />, path: '/leaderboard' },
-  { text: 'Metrics', icon: <BarChartIcon />, path: '/metrics' },
 ];
 
 const MainLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -57,4 +56,3 @@ const MainLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 };
 
 export default MainLayout;
-

@@ -6,7 +6,6 @@ import NotFound from './pages/NotFound';
 import RecognitionsPage from './pages/RecognitionsPage';
 import EmployeesPage from './pages/EmployeesPage';
 import LeaderboardPage from './pages/LeaderboardPage';
-import MetricsPage from './pages/MetricsPage';
 import RecognitionTypesPage from './pages/RecognitionTypesPage';
 
 function App() {
@@ -17,7 +16,6 @@ function App() {
       <Route path="/recognitions" element={<RecognitionsPage />} />
       <Route path="/employees" element={<EmployeesPage />} />
       <Route path="/leaderboard" element={<LeaderboardPage />} />
-      <Route path="/metrics" element={<MetricsPage />} />
       <Route path="/recognition-types" element={<RecognitionTypesPage />} />
       <Route path="*" element={<NotFound />} />
     </Routes>
