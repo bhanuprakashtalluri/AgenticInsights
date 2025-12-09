@@ -16,6 +16,7 @@ If your environment differs, replace host/user/password/database with your value
 
 - [ ] Create the `recognitions` database (if missing)
 - [ ] Run V1 (schema), V2 (seed), V3 (indexes) SQL migration files
+- [ ] Run V3__fix_employee_id_seq.sql to sync all table sequences (employee, recognition_type, recognitions)
 - [ ] Verify recognition types deduped and unique index exists
 - [ ] Run verification queries
 - [ ] Use examples to insert/delete/truncate rows or run COPY for bulk import
@@ -54,19 +55,21 @@ psql -h localhost -U postgres -tc "SELECT 1 FROM pg_database WHERE datname='reco
 
 ## 2. Apply migrations (manual)
 
-Apply the V1 (schema), V2 (seed) and V3 (indexes) migrations in order. These commands run the SQL files located under `src/main/resources/db/migration/`.
+Apply the V1 (schema), V2 (seed), V3 (indexes), and V3__fix_employee_id_seq.sql migrations in order. These commands run the SQL files located under `src/main/resources/db/migration/`.
 
 ```bash
 export PGPASSWORD=rmkec
 psql -h localhost -U postgres -d recognitions -f src/main/resources/db/migration/V1__create_recognition_tables.sql
 psql -h localhost -U postgres -d recognitions -f src/main/resources/db/migration/V2__seed_sample_data.sql
 psql -h localhost -U postgres -d recognitions -f src/main/resources/db/migration/V3__create_indexes.sql
+psql -h localhost -U postgres -d recognitions -f src/main/resources/db/migration/V3__fix_employee_id_seq.sql
 ```
 
 Notes:
 - `V1` creates the schema and a case-insensitive uniqueness constraint on `recognition_type` names.
 - `V2` seeds sample employees, recognition types, and recognitions (improved seeding spreads recognitions across ~3 years).
 - `V3` adds helpful indexes for analytics and leaderboard queries.
+- `V3__fix_employee_id_seq.sql` resets all main table sequences to the next available value after manual data changes or restores. Prevents duplicate key errors on inserts for employee, recognition_type, and recognitions tables.
 
 If a script fails (syntax error), inspect the SQL file and the error message; most seed scripts use PL/pgSQL DO blocks and can be re-run after fixes.
 
@@ -309,6 +312,7 @@ Apply migrations:
 psql -h localhost -U postgres -d recognitions -f src/main/resources/db/migration/V1__create_recognition_tables.sql
 psql -h localhost -U postgres -d recognitions -f src/main/resources/db/migration/V2__seed_sample_data.sql
 psql -h localhost -U postgres -d recognitions -f src/main/resources/db/migration/V3__create_indexes.sql
+psql -h localhost -U postgres -d recognitions -f src/main/resources/db/migration/V3__fix_employee_id_seq.sql
 ```
 
 Dedupe types (safe):

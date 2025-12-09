@@ -1,0 +1,8 @@
+CREATE TABLE IF NOT EXISTS audit_log (
+    id SERIAL PRIMARY KEY,
+    action VARCHAR(255) NOT NULL,
+    details TEXT,
+    timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    username VARCHAR(255)
+);
+

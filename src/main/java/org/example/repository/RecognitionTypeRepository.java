@@ -11,4 +11,6 @@ import java.util.Optional;
 public interface RecognitionTypeRepository extends JpaRepository<RecognitionType, Long> {
     Optional<RecognitionType> findByUuid(java.util.UUID uuid);
     List<RecognitionType> findAllByUuidIn(List<java.util.UUID> uuids);
+    List<RecognitionType> findByTypeNameContainingIgnoreCase(String name);
+    org.springframework.data.domain.Page<RecognitionType> findByTypeNameContainingIgnoreCase(String name, org.springframework.data.domain.Pageable pageable);
 }

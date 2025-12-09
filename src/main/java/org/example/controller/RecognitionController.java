@@ -2,16 +2,18 @@ package org.example.controller;
 
 import org.example.dto.RecognitionResponse;
 import org.example.dto.RecognitionCreateRequest;
-import org.example.dto.RecognitionUpdateRequest;
 import org.example.model.Recognition;
-import org.example.model.RecognitionType;
+import org.example.model.Employee;
 import org.example.repository.EmployeeRepository;
 import org.example.repository.RecognitionRepository;
 import org.example.repository.RecognitionTypeRepository;
-import org.example.service.AIInsightsService;
-import org.example.service.ChartService;
 import org.example.service.RecognitionCsvExporter;
+import org.example.service.RecognitionToonExporter;
+import org.example.service.ChartService;
+import org.example.service.FileStorageService;
 import org.example.util.EntityMapper;
+import org.example.dto.RecognitionChartDTO;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -19,82 +21,67 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 
-import java.io.OutputStream;
+import jakarta.servlet.http.HttpServletRequest;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.time.Instant;
-import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
-import java.time.temporal.WeekFields;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.springframework.security.core.Authentication;
 
 @RestController
 @RequestMapping("/recognitions")
 public class RecognitionController {
-
     private final RecognitionRepository recognitionRepository;
     private final RecognitionTypeRepository recognitionTypeRepository;
     private final EmployeeRepository employeeRepository;
     private final RecognitionCsvExporter csvExporter;
-    private final AIInsightsService insightsService;
+    private final RecognitionToonExporter toonExporter;
     private final ChartService chartService;
+    private final FileStorageService fileStorageService;
 
-    private static final Logger log = LoggerFactory.getLogger(RecognitionController.class);
+    private static final String CSV_DIR = "artifacts/exports/csv/";
+    private static final String JSON_DIR = "artifacts/exports/json/";
+    private static final String GRAPHS_DIR = "artifacts/graphs/";
+    private static String timestampedName(String base, String ext) {
+        DateTimeFormatter fmt = DateTimeFormatter.ofPattern("dd-MM-yyyy-HH.mm");
+        String ts = LocalDateTime.now().format(fmt);
+        return base + "-" + ts + (ext != null ? "." + ext : "");
+    }
 
     public RecognitionController(RecognitionRepository recognitionRepository,
                                  RecognitionTypeRepository recognitionTypeRepository,
                                  EmployeeRepository employeeRepository,
                                  RecognitionCsvExporter csvExporter,
-                                 AIInsightsService insightsService,
-                                 ChartService chartService) {
+                                 RecognitionToonExporter toonExporter,
+                                 ChartService chartService,
+                                 FileStorageService fileStorageService) {
         this.recognitionRepository = recognitionRepository;
         this.recognitionTypeRepository = recognitionTypeRepository;
         this.employeeRepository = employeeRepository;
         this.csvExporter = csvExporter;
-        this.insightsService = insightsService;
+        this.toonExporter = toonExporter;
         this.chartService = chartService;
+        this.fileStorageService = fileStorageService;
     }
 
-    @GetMapping
-    public Page<RecognitionResponse> list(@RequestParam(defaultValue = "0") int page,
-                                  @RequestParam(defaultValue = "20") int size,
-                                  @RequestParam(required = false) Long recipientId,
-                                  @RequestParam(required = false) Long senderId,
-                                  @RequestParam(required = false) java.util.UUID recipientUuid,
-                                  @RequestParam(required = false) java.util.UUID senderUuid) {
-        Pageable p = PageRequest.of(page, size);
-        Page<Recognition> pageResult;
-        // prefer UUID resolution if provided
-        if (recipientUuid != null) {
-            pageResult = employeeRepository.findByUuid(recipientUuid).map(e -> recognitionRepository.findAllByRecipientId(e.getId(), p)).orElseGet(() -> recognitionRepository.findAllWithRelations(Pageable.unpaged()));
-        } else if (senderUuid != null) {
-            pageResult = employeeRepository.findByUuid(senderUuid).map(e -> recognitionRepository.findAllBySenderId(e.getId(), p)).orElseGet(() -> recognitionRepository.findAllWithRelations(Pageable.unpaged()));
-        } else if (recipientId != null) pageResult = recognitionRepository.findAllByRecipientId(recipientId, p);
-        else if (senderId != null) pageResult = recognitionRepository.findAllBySenderId(senderId, p);
-         else pageResult = recognitionRepository.findAllWithRelations(p);
-         return pageResult.map(EntityMapper::toRecognitionResponse);
-     }
-
+    // --- CRUD ---
     @PostMapping
     public ResponseEntity<?> create(@RequestBody RecognitionCreateRequest req) {
         try {
             Recognition r = new Recognition();
             if (req.recognitionTypeId != null) {
-                Optional<RecognitionType> rt = recognitionTypeRepository.findById(req.recognitionTypeId);
-                rt.ifPresent(r::setRecognitionType);
+                recognitionTypeRepository.findById(req.recognitionTypeId).ifPresent(r::setRecognitionType);
             } else if (req.recognitionTypeUuid != null) {
-                Optional<RecognitionType> rt = recognitionTypeRepository.findByUuid(req.recognitionTypeUuid);
-                rt.ifPresent(r::setRecognitionType);
+                recognitionTypeRepository.findByUuid(req.recognitionTypeUuid).ifPresent(r::setRecognitionType);
             }
-            // resolve recipient
             if (req.recipientId != null) {
                 employeeRepository.findById(req.recipientId).ifPresent(r::setRecipient);
             } else if (req.recipientUuid != null) {
@@ -105,14 +92,13 @@ public class RecognitionController {
             } else if (req.senderUuid != null) {
                 employeeRepository.findByUuid(req.senderUuid).ifPresent(r::setSender);
             }
-            r.setAwardName(req.awardName);
+            r.setCategory(req.category);
             r.setLevel(req.level);
             r.setMessage(req.message);
             r.setAwardPoints(req.awardPoints == null ? 0 : req.awardPoints);
             if (req.sentAt != null) r.setSentAt(Instant.parse(req.sentAt));
-            r.setApprovalStatus("PENDING");
+            r.setApprovalStatus("PENDING"); // always uppercase
             Recognition saved = recognitionRepository.save(r);
-            // reload with relations to map
             Recognition reloaded = recognitionRepository.findByIdWithRelations(saved.getId()).orElse(saved);
             return ResponseEntity.status(201).body(EntityMapper.toRecognitionResponse(reloaded));
         } catch (Exception e) {
@@ -120,61 +106,141 @@ public class RecognitionController {
         }
     }
 
-    @GetMapping("/{id}")
-    public ResponseEntity<?> getById(@PathVariable Long id) {
-        Optional<Recognition> r = recognitionRepository.findByIdWithRelations(id);
-        return r.map(rec -> ResponseEntity.ok(EntityMapper.toRecognitionResponse(rec))).orElseGet(() -> ResponseEntity.notFound().build());
+    @GetMapping
+    public Page<RecognitionResponse> list(@RequestParam(defaultValue = "0") int page,
+                               @RequestParam(defaultValue = "20") int size,
+                               @RequestParam(required = false) Long senderId,
+                               @RequestParam(required = false) Long recipientId,
+                               Authentication authentication) {
+        Pageable p = PageRequest.of(page, size);
+        List<Recognition> all = recognitionRepository.findAllWithRelations(p).getContent();
+        Page<Recognition> pageResult;
+        String role = authentication.getAuthorities().stream().findFirst().map(a -> a.getAuthority()).orElse("");
+        String email = authentication.getName();
+        if (role.equals("ROLE_EMPLOYEE")) {
+            Long employeeId = employeeRepository.findByEmail(email).map(Employee::getId).orElse(-1L);
+            all = all.stream().filter(r -> (r.getSender() != null && r.getSender().getId().equals(employeeId)) || (r.getRecipient() != null && r.getRecipient().getId().equals(employeeId))).toList();
+            pageResult = new org.springframework.data.domain.PageImpl<>(all, p, all.size());
+        } else if (role.equals("ROLE_TEAMLEAD")) {
+            Long managerId = employeeRepository.findByEmail(email).map(Employee::getId).orElse(-1L);
+            all = all.stream().filter(r -> r.getRecipient() != null && managerId.equals(r.getRecipient().getManagerId())).toList();
+            pageResult = new org.springframework.data.domain.PageImpl<>(all, p, all.size());
+        } else if (role.equals("ROLE_MANAGER")) {
+            Long unitId = employeeRepository.findByEmail(email).map(Employee::getUnitId).orElse(-1L);
+            all = all.stream().filter(r -> r.getRecipient() != null && unitId.equals(r.getRecipient().getUnitId())).toList();
+            pageResult = new org.springframework.data.domain.PageImpl<>(all, p, all.size());
+        } else {
+            pageResult = recognitionRepository.findAllWithRelations(p);
+        }
+        return pageResult.map(EntityMapper::toRecognitionResponse);
     }
 
-    @GetMapping("/uuid/{uuid}")
-    public ResponseEntity<?> getByUuid(@PathVariable UUID uuid) {
-        Optional<Recognition> r = recognitionRepository.findByUuidWithRelations(uuid);
-        return r.map(rec -> ResponseEntity.ok(EntityMapper.toRecognitionResponse(rec))).orElseGet(() -> ResponseEntity.notFound().build());
+    private Long getEmployeeIdByEmail(String email) {
+        return employeeRepository.findByEmail(email).map(Employee::getId).orElse(-1L);
     }
 
-    @PutMapping("/{id}")
-    public ResponseEntity<?> update(@PathVariable Long id, @RequestBody org.example.dto.RecognitionUpdateRequest req) {
-        Optional<Recognition> opt = recognitionRepository.findByIdWithRelations(id);
+    // Unified get by ID or UUID (as request parameters)
+    @GetMapping("/single")
+    public ResponseEntity<?> getByIdOrUuid(@RequestParam(required = false) Long id, @RequestParam(required = false) UUID uuid, HttpServletRequest request) {
+        Optional<Recognition> opt = Optional.empty();
+        if (id != null) opt = recognitionRepository.findByIdWithRelations(id);
+        else if (uuid != null) opt = recognitionRepository.findByUuidWithRelations(uuid);
         if (opt.isEmpty()) return ResponseEntity.notFound().build();
         Recognition r = opt.get();
-        if (req.awardName != null) r.setAwardName(req.awardName);
-        if (req.level != null) r.setLevel(req.level);
-        if (req.message != null) r.setMessage(req.message);
-        if (req.awardPoints != null) r.setAwardPoints(req.awardPoints);
-        if (req.approvalStatus != null) r.setApprovalStatus(req.approvalStatus);
-        if (req.rejectionReason != null) r.setRejectionReason(req.rejectionReason);
+        return ResponseEntity.ok(EntityMapper.toRecognitionResponse(r));
+    }
+
+    // Unified update by ID or UUID (as request parameters)
+    @PutMapping("/single")
+    public ResponseEntity<?> update(@RequestParam(required = false) Long id, @RequestParam(required = false) UUID uuid, @RequestBody Recognition req, HttpServletRequest request) {
+        Optional<Recognition> opt = Optional.empty();
+        if (id != null) opt = recognitionRepository.findByIdWithRelations(id);
+        else if (uuid != null) opt = recognitionRepository.findByUuidWithRelations(uuid);
+        if (opt.isEmpty()) return ResponseEntity.notFound().build();
+        Recognition r = opt.get();
+        // Update fields
+        if (req.getCategory() != null) r.setCategory(req.getCategory());
+        if (req.getLevel() != null) r.setLevel(req.getLevel());
+        if (req.getMessage() != null) r.setMessage(req.getMessage());
+        if (req.getSentAt() != null) r.setSentAt(req.getSentAt());
+        if (req.getRecognitionType() != null) r.setRecognitionType(req.getRecognitionType());
+        // Points logic
+        String typeName = r.getRecognitionType() != null ? r.getRecognitionType().getTypeName() : null;
+        String level = r.getLevel();
+        if (typeName != null) {
+            if (typeName.equalsIgnoreCase("ecard")) {
+                r.setAwardPoints(0);
+            } else if (typeName.equalsIgnoreCase("ecard_with_points")) {
+                Integer pts = req.getAwardPoints();
+                if (pts != null && (pts == 5 || pts == 10)) {
+                    r.setAwardPoints(pts);
+                } else {
+                    r.setAwardPoints(5); // default to 5 if not valid
+                }
+            } else if (typeName.equalsIgnoreCase("award")) {
+                if (level != null) {
+                    switch (level.toLowerCase()) {
+                        case "bronze" -> r.setAwardPoints(20);
+                        case "silver" -> r.setAwardPoints(25);
+                        case "gold" -> r.setAwardPoints(30);
+                        default -> r.setAwardPoints(0);
+                    }
+                } else {
+                    r.setAwardPoints(0);
+                }
+            }
+        }
+        // Status and rejection reason logic
+        String prevStatus = r.getApprovalStatus();
+        String newStatus = req.getApprovalStatus();
+        if (newStatus != null) {
+            r.setApprovalStatus(newStatus);
+            if (!"REJECTED".equalsIgnoreCase(newStatus)) {
+                r.setRejectionReason(null); // clear reason if not rejected
+            } else {
+                r.setRejectionReason(req.getRejectionReason());
+            }
+        }
         recognitionRepository.save(r);
-        Recognition reloaded = recognitionRepository.findByIdWithRelations(r.getId()).orElse(r);
-        return ResponseEntity.ok(EntityMapper.toRecognitionResponse(reloaded));
+        return ResponseEntity.ok(EntityMapper.toRecognitionResponse(r));
     }
 
-    @PatchMapping("/{id}/approve")
-    public ResponseEntity<?> approve(@PathVariable Long id,
-                                     @RequestBody(required = false) org.example.dto.ApprovalRequest body,
-                                     @RequestParam(required = false) Long approverId) {
-        Optional<Recognition> opt = recognitionRepository.findByIdWithRelations(id);
+    // Unified delete by ID or UUID (as request parameters)
+    @DeleteMapping("/single")
+    public ResponseEntity<?> delete(@RequestParam(required = false) Long id, @RequestParam(required = false) UUID uuid, HttpServletRequest request) {
+        Optional<Recognition> opt = Optional.empty();
+        if (id != null) opt = recognitionRepository.findByIdWithRelations(id);
+        else if (uuid != null) opt = recognitionRepository.findByUuidWithRelations(uuid);
         if (opt.isEmpty()) return ResponseEntity.notFound().build();
         Recognition r = opt.get();
-        Long usedApprover = (body != null && body.approverId != null) ? body.approverId : approverId;
-        // (we don't currently store approver, just accept it)
+        recognitionRepository.deleteById(r.getId());
+        return ResponseEntity.noContent().build();
+    }
+
+    // Unified approve by ID or UUID (as request parameters)
+    @PatchMapping("/approve")
+    public ResponseEntity<?> approve(@RequestParam(required = false) Long id, @RequestParam(required = false) UUID uuid, @RequestBody(required = false) org.example.dto.ApprovalRequest body, @RequestParam(required = false) Long approverId, HttpServletRequest request) {
+        Optional<Recognition> opt = Optional.empty();
+        if (id != null) opt = recognitionRepository.findByIdWithRelations(id);
+        else if (uuid != null) opt = recognitionRepository.findByUuidWithRelations(uuid);
+        if (opt.isEmpty()) return ResponseEntity.notFound().build();
+        Recognition r = opt.get();
         r.setApprovalStatus("APPROVED");
-        // clear any previous rejection reason when approving
         r.setRejectionReason(null);
         recognitionRepository.save(r);
         Recognition reloaded = recognitionRepository.findByIdWithRelations(r.getId()).orElse(r);
         return ResponseEntity.ok(EntityMapper.toRecognitionResponse(reloaded));
     }
 
-    @PatchMapping("/{id}/reject")
-    public ResponseEntity<?> reject(@PathVariable Long id,
-                                    @RequestBody(required = false) org.example.dto.ApprovalRequest body,
-                                    @RequestParam(required = false) String reason,
-                                    @RequestParam(required = false) Long approverId) {
-        Optional<Recognition> opt = recognitionRepository.findByIdWithRelations(id);
+    // Unified reject by ID or UUID (as request parameters)
+    @PatchMapping("/reject")
+    public ResponseEntity<?> reject(@RequestParam(required = false) Long id, @RequestParam(required = false) UUID uuid, @RequestBody(required = false) org.example.dto.ApprovalRequest body, @RequestParam(required = false) String reason, @RequestParam(required = false) Long approverId, HttpServletRequest request) {
+        Optional<Recognition> opt = Optional.empty();
+        if (id != null) opt = recognitionRepository.findByIdWithRelations(id);
+        else if (uuid != null) opt = recognitionRepository.findByUuidWithRelations(uuid);
         if (opt.isEmpty()) return ResponseEntity.notFound().build();
         Recognition r = opt.get();
         String usedReason = (body != null && body.reason != null) ? body.reason : reason;
-        Long usedApprover = (body != null && body.approverId != null) ? body.approverId : approverId;
         if (usedReason == null || usedReason.isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "reason is required to reject a recognition"));
         }
@@ -185,340 +251,324 @@ public class RecognitionController {
         return ResponseEntity.ok(EntityMapper.toRecognitionResponse(reloaded));
     }
 
-    @DeleteMapping("/{id}")
-    public ResponseEntity<?> delete(@PathVariable Long id) {
-        if (!recognitionRepository.existsById(id)) return ResponseEntity.notFound().build();
-        recognitionRepository.deleteById(id);
-        return ResponseEntity.noContent().build();
+    // --- Search ---
+    @GetMapping("/search")
+    public Page<RecognitionResponse> search(@RequestParam(required = false) Long id,
+                                        @RequestParam(required = false) UUID uuid,
+                                        @RequestParam(required = false) String name,
+                                        @RequestParam(required = false) Long unitId,
+                                        @RequestParam(required = false) Long typeId,
+                                        @RequestParam(required = false) Integer points,
+                                        @RequestParam(required = false) String role,
+                                        @RequestParam(required = false) String status,
+                                        @RequestParam(required = false) String category,
+                                        @RequestParam(defaultValue = "0") int page,
+                                        @RequestParam(defaultValue = "20") int size,
+                                        HttpServletRequest request) {
+    Pageable p = PageRequest.of(page, size);
+    List<Recognition> filtered = recognitionRepository.findAllWithRelations(Pageable.unpaged()).getContent();
+        if (name != null && !name.isBlank()) filtered = filtered.stream().filter(r -> r.getCategory() != null && r.getCategory().toLowerCase().contains(name.toLowerCase())).toList();
+        if (unitId != null && !isAll(unitId)) filtered = filtered.stream().filter(r -> r.getRecipient() != null && unitId.equals(r.getRecipient().getUnitId())).toList();
+        if (typeId != null && !isAll(typeId)) filtered = filtered.stream().filter(r -> r.getRecognitionType() != null && typeId.equals(r.getRecognitionType().getId())).toList();
+        if (points != null && !isAll(points)) filtered = filtered.stream().filter(r -> points.equals(r.getAwardPoints())).toList();
+        if (role != null && !role.isBlank() && !role.equalsIgnoreCase("all")) filtered = filtered.stream().filter(r -> r.getRecipient() != null && role.equalsIgnoreCase(r.getRecipient().getRole())).toList();
+        if (status != null && !status.isBlank() && !status.equalsIgnoreCase("all")) {
+            String statusNorm = status.trim().toUpperCase();
+            filtered = filtered.stream().filter(r -> {
+                String s = r.getApprovalStatus();
+                return s != null && statusNorm.equals(s.trim().toUpperCase());
+            }).toList();
+        }
+        if (category != null && !category.isBlank() && !category.equalsIgnoreCase("all")) {
+            String categoryNorm = category.trim().toLowerCase();
+            filtered = filtered.stream().filter(r -> r.getCategory() != null && r.getCategory().toLowerCase().contains(categoryNorm)).toList();
+        }
+        final List<Recognition> finalFiltered = filtered;
+        return finalFiltered.stream().skip((long) page * size).limit(size).map(EntityMapper::toRecognitionResponse).collect(Collectors.collectingAndThen(Collectors.toList(), l -> new org.springframework.data.domain.PageImpl<>(l, p, finalFiltered.size())));
     }
 
+    // --- Export ---
     @GetMapping("/export.csv")
-    public ResponseEntity<byte[]> exportCsv(@RequestParam(required = false) Long recipientId) throws Exception {
+    public ResponseEntity<byte[]> exportCsv(@RequestParam(required = false) Long recipientId,
+                                             @RequestParam(required = false) Long senderId,
+                                             @RequestParam(required = false) String role,
+                                             @RequestParam(required = false) String status,
+                                             @RequestParam(required = false) String category,
+                                             @RequestParam(required = false) Long managerId,
+                                             @RequestParam(required = false) Long days) {
         List<Recognition> list;
-        if (recipientId != null) list = recognitionRepository.findAllByRecipientId(recipientId, Pageable.unpaged()).getContent();
-        else list = recognitionRepository.findAllWithRelations(Pageable.unpaged()).getContent();
-        byte[] bytes = csvExporter.export(list);
+        boolean applyWindow = (role != null) || (managerId != null) || (days != null) || (status != null) || (category != null);
+        if (applyWindow) {
+            long effectiveDays = (days == null || days <= 0) ? 30 : days;
+            Instant to = Instant.now();
+            Instant from = to.minus(effectiveDays, ChronoUnit.DAYS);
+            list = recognitionRepository.findAllBetweenWithRelations(from, to);
+        } else {
+            list = recognitionRepository.findAllWithRelations(Pageable.unpaged()).getContent();
+        }
+        if (recipientId != null && !isAll(recipientId)) list = list.stream().filter(r -> recipientId.equals(r.getRecipientId())).toList();
+        if (senderId != null && !isAll(senderId)) list = list.stream().filter(r -> senderId.equals(r.getSenderId())).toList();
+        if (role != null && !role.isBlank() && !role.equalsIgnoreCase("all")) list = list.stream().filter(r -> r.getRecipient() != null && role.equalsIgnoreCase(r.getRecipient().getRole())).toList();
+        if (status != null && !status.isBlank() && !status.equalsIgnoreCase("all")) {
+            String statusNorm = status.trim().toUpperCase();
+            list = list.stream().filter(r -> {
+                String s = r.getApprovalStatus();
+                return s != null && statusNorm.equals(s.trim().toUpperCase());
+            }).toList();
+        }
+        if (category != null && !category.isBlank() && !category.equalsIgnoreCase("all")) {
+            String categoryNorm = category.trim().toLowerCase();
+            list = list.stream().filter(r -> r.getCategory() != null && r.getCategory().toLowerCase().contains(categoryNorm)).toList();
+        }
+        if (managerId != null && !isAll(managerId)) list = list.stream().filter(r -> r.getRecipient() != null && managerId.equals(r.getRecipient().getManagerId())).toList();
+        if (list.isEmpty()) {
+            return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=empty.csv")
+                .contentType(MediaType.parseMediaType("text/csv"))
+                .body("".getBytes());
+        }
+        byte[] bytes;
+        String fname = timestampedName("recognitions_export", "csv");
+        try {
+            bytes = csvExporter.export(list);
+            Files.createDirectories(Paths.get(CSV_DIR));
+            Files.write(Paths.get(CSV_DIR, fname), bytes);
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(("CSV export failed: " + e.getMessage()).getBytes());
+        }
         return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=recognitions.csv")
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=" + fname)
                 .contentType(MediaType.parseMediaType("text/csv"))
                 .body(bytes);
     }
 
     @GetMapping("/export.json")
-    public ResponseEntity<List<RecognitionResponse>> exportJson(@RequestParam(required = false) Long recipientId) {
+    public ResponseEntity<List<RecognitionResponse>> exportJson(@RequestParam(required = false) Long recipientId,
+                                                                 @RequestParam(required = false) Long senderId,
+                                                                 @RequestParam(required = false) String role,
+                                                                 @RequestParam(required = false) String status,
+                                                                 @RequestParam(required = false) String category,
+                                                                 @RequestParam(required = false) Long managerId,
+                                                                 @RequestParam(required = false) Long days) {
         List<Recognition> list;
-        if (recipientId != null) list = recognitionRepository.findAllByRecipientId(recipientId, Pageable.unpaged()).getContent();
-        else list = recognitionRepository.findAllWithRelations(Pageable.unpaged()).getContent();
+        boolean applyWindow = (role != null) || (managerId != null) || (days != null) || (status != null) || (category != null);
+        if (applyWindow) {
+            long effectiveDays = (days == null || days <= 0) ? 30 : days;
+            Instant to = Instant.now();
+            Instant from = to.minus(effectiveDays, ChronoUnit.DAYS);
+            list = recognitionRepository.findAllBetweenWithRelations(from, to);
+        } else {
+            list = recognitionRepository.findAllWithRelations(Pageable.unpaged()).getContent();
+        }
+        if (recipientId != null && !isAll(recipientId)) list = list.stream().filter(r -> recipientId.equals(r.getRecipientId())).toList();
+        if (senderId != null && !isAll(senderId)) list = list.stream().filter(r -> senderId.equals(r.getSenderId())).toList();
+        if (role != null && !role.isBlank() && !role.equalsIgnoreCase("all")) list = list.stream().filter(r -> r.getRecipient() != null && role.equalsIgnoreCase(r.getRecipient().getRole())).toList();
+        if (status != null && !status.isBlank() && !status.equalsIgnoreCase("all")) {
+            String statusNorm = status.trim().toUpperCase();
+            list = list.stream().filter(r -> {
+                String s = r.getApprovalStatus();
+                return s != null && statusNorm.equals(s.trim().toUpperCase());
+            }).toList();
+        }
+        if (category != null && !category.isBlank() && !category.equalsIgnoreCase("all")) {
+            String categoryNorm = category.trim().toLowerCase();
+            list = list.stream().filter(r -> r.getCategory() != null && r.getCategory().toLowerCase().contains(categoryNorm)).toList();
+        }
+        if (managerId != null && !isAll(managerId)) list = list.stream().filter(r -> r.getRecipient() != null && managerId.equals(r.getRecipient().getManagerId())).toList();
+        if (list.isEmpty()) {
+            return ResponseEntity.ok(List.of());
+        }
         List<RecognitionResponse> resp = list.stream().map(EntityMapper::toRecognitionResponse).collect(Collectors.toList());
+        // Store JSON in json folder
+        try {
+            Files.createDirectories(Paths.get(JSON_DIR));
+            String fname = timestampedName("recognitions_export", "json");
+            String json = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(resp);
+            Files.write(Paths.get(JSON_DIR, fname), json.getBytes());
+        } catch (Exception e) {
+            // Log or ignore
+        }
         return ResponseEntity.ok(resp);
     }
 
-    @GetMapping(value = "/export-stream.csv")
-    public ResponseEntity<StreamingResponseBody> exportStreamCsv(@RequestParam(required = false) Long recipientId) throws Exception {
+    @GetMapping("/export.toon")
+    public ResponseEntity<byte[]> exportToon(@RequestParam(required = false) Long recipientId,
+                                             @RequestParam(required = false) Long senderId,
+                                             @RequestParam(required = false) String role,
+                                             @RequestParam(required = false) String status,
+                                             @RequestParam(required = false) String category,
+                                             @RequestParam(required = false) Long managerId,
+                                             @RequestParam(required = false) Long days) {
         List<Recognition> list;
-        if (recipientId != null) list = recognitionRepository.findAllByRecipientId(recipientId, Pageable.unpaged()).getContent();
-        else list = recognitionRepository.findAllWithRelations(Pageable.unpaged()).getContent();
-
-        StreamingResponseBody stream = (OutputStream os) -> {
-            try {
-                csvExporter.exportToStream(os, list);
-            } catch (Exception ex) {
-                throw new RuntimeException(ex);
-            }
-        };
-
-        return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=recognitions-stream.csv")
-                .contentType(MediaType.parseMediaType("text/csv"))
-                .body(stream);
-    }
-
-    @GetMapping("/insights")
-    public Map<String, Object> insights(@RequestParam(required = false) Long days) {
-        long effectiveDays = (days == null || days <= 0) ? 30 : days;
-        Instant to = Instant.now();
-        Instant from = to.minus(effectiveDays, ChronoUnit.DAYS);
-        return insightsService.generateInsights(from, to);
-    }
-
-    @GetMapping(value = "/graph.png", produces = MediaType.IMAGE_PNG_VALUE)
-    public ResponseEntity<byte[]> graph(@RequestParam(required = false) Long days) throws Exception {
-        long effectiveDays = (days == null || days <= 0) ? 30 : days;
-        Instant to = Instant.now();
-        Instant from = to.minus(effectiveDays, ChronoUnit.DAYS);
-        Map<String, Object> insights = insightsService.generateInsights(from, to);
-        @SuppressWarnings("unchecked")
-        Map<String, Integer> series = (Map<String, Integer>) insights.get("timeSeriesByDay");
-        byte[] png = chartService.renderTimeSeriesChart(series, "Recognitions over time", "day", "count");
-        return ResponseEntity.ok().contentType(MediaType.IMAGE_PNG).body(png);
-    }
-
-    // New endpoints: role-based insights and exports
-    @GetMapping("/insights/role")
-    public Map<String, Object> insightsByRole(@RequestParam String role, @RequestParam(required = false) Long days) {
-        long effectiveDays = (days == null || days <= 0) ? 30 : days;
-        Instant to = Instant.now();
-        Instant from = to.minus(effectiveDays, ChronoUnit.DAYS);
-        return insightsService.generateInsightsForRole(role, from, to);
-    }
-
-    @GetMapping(value = "/insights/role/graph.png", produces = MediaType.IMAGE_PNG_VALUE)
-    public ResponseEntity<byte[]> graphByRole(@RequestParam String role, @RequestParam(required = false) Long days) throws Exception {
-        long effectiveDays = (days == null || days <= 0) ? 30 : days;
-        Instant to = Instant.now();
-        Instant from = to.minus(effectiveDays, ChronoUnit.DAYS);
-        Map<String, Object> insights = insightsService.generateInsightsForRole(role, from, to);
-        @SuppressWarnings("unchecked")
-        Map<String, Integer> series = (Map<String, Integer>) insights.get("timeSeriesByDay");
-        byte[] png = chartService.renderTimeSeriesChart(series, "Recognitions (" + role + ")", "day", "count");
-        return ResponseEntity.ok().contentType(MediaType.IMAGE_PNG).body(png);
-    }
-
-    @GetMapping("/export-role.csv")
-    public ResponseEntity<byte[]> exportCsvByRole(@RequestParam String role, @RequestParam(required = false) Long days) throws Exception {
-        long effectiveDays = (days == null || days <= 0) ? 30 : days;
-        Instant to = Instant.now();
-        Instant from = to.minus(effectiveDays, ChronoUnit.DAYS);
-        List<Recognition> list = recognitionRepository.findAllBetween(from, to).stream().filter(r -> {
-            if (r.getRecipient() == null) return false;
-            return role.equalsIgnoreCase(r.getRecipient().getRole());
-        }).toList();
-        byte[] bytes = csvExporter.export(list);
-        return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=recognitions-" + role + ".csv")
-                .contentType(MediaType.parseMediaType("text/csv"))
-                .body(bytes);
-    }
-
-    // Manager scoped insights
-    @GetMapping("/insights/manager/{managerId}")
-    public Map<String, Object> insightsByManager(@PathVariable Long managerId, @RequestParam(required = false) Long days) {
-        long effectiveDays = (days == null || days <= 0) ? 30 : days;
-        Instant to = Instant.now();
-        Instant from = to.minus(effectiveDays, ChronoUnit.DAYS);
-        return insightsService.generateInsightsForManager(managerId, from, to);
-    }
-
-    @GetMapping(value = "/insights/manager/{managerId}/graph.png", produces = MediaType.IMAGE_PNG_VALUE)
-    public ResponseEntity<byte[]> graphByManager(@PathVariable Long managerId, @RequestParam(required = false) Long days) throws Exception {
-        long effectiveDays = (days == null || days <= 0) ? 30 : days;
-        Instant to = Instant.now();
-        Instant from = to.minus(effectiveDays, ChronoUnit.DAYS);
-        Map<String, Object> insights = insightsService.generateInsightsForManager(managerId, from, to);
-        @SuppressWarnings("unchecked")
-        Map<String, Integer> series = (Map<String, Integer>) insights.get("timeSeriesByDay");
-        byte[] png = chartService.renderTimeSeriesChart(series, "Recognitions (manager:" + managerId + ")", "day", "count");
-        return ResponseEntity.ok().contentType(MediaType.IMAGE_PNG).body(png);
-    }
-
-    @GetMapping("/export-manager/{managerId}.csv")
-    public ResponseEntity<byte[]> exportCsvByManager(@PathVariable Long managerId, @RequestParam(required = false) Long days) throws Exception {
-        long effectiveDays = (days == null || days <= 0) ? 30 : days;
-        Instant to = Instant.now();
-        Instant from = to.minus(effectiveDays, ChronoUnit.DAYS);
-        // find direct reports
-        List<Long> reports = recognitionRepository.findAll().stream().filter(r -> r.getRecipient() != null && managerId.equals(r.getRecipient().getManagerId())).map(r -> r.getRecipientId()).distinct().toList();
-        List<Recognition> list = recognitionRepository.findAllBetween(from, to).stream().filter(r -> reports.contains(r.getRecipientId())).toList();
-        byte[] bytes = csvExporter.export(list);
-        return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=recognitions-manager-" + managerId + ".csv")
-                .contentType(MediaType.parseMediaType("text/csv"))
-                .body(bytes);
-    }
-
-    @GetMapping(value = "/graph-advanced.png", produces = {MediaType.IMAGE_PNG_VALUE, MediaType.APPLICATION_JSON_VALUE})
-    public ResponseEntity<byte[]> graphAdvanced(@RequestParam(defaultValue = "daily") String series,
-                                                @RequestParam(required = false) String role,
-                                                @RequestParam(required = false) Long managerId,
-                                                @RequestParam(required = false) Long days,
-                                                @RequestParam(required = false, defaultValue = "png") String format) throws Exception {
-        try {
-            String normalized = series == null ? "daily" : series.toLowerCase(Locale.ROOT);
-            if ("weakly".equals(normalized)) normalized = "weekly"; // alias
-            java.util.Set<String> allowed = java.util.Set.of("daily","weekly","monthly","quarterly","yearly");
-            if (!allowed.contains(normalized)) {
-                return ResponseEntity.badRequest().body(("Unsupported series: " + series + ". Allowed: " + allowed).getBytes());
-            }
+        boolean applyWindow = (role != null) || (managerId != null) || (days != null) || (status != null) || (category != null);
+        if (applyWindow) {
+            long effectiveDays = (days == null || days <= 0) ? 30 : days;
             Instant to = Instant.now();
-            Instant from;
-            // Clamp user-specified days to prevent unbounded scans (per granularity sensible maximum)
-            java.util.Map<String, Long> maxDays = java.util.Map.of(
-                    "daily", 400L,          // ~13 months
-                    "weekly", 3L * 365L,     // ~3 years
-                    "monthly", 7L * 365L,    // ~7 years
-                    "quarterly", 7L * 365L,  // treat similar to monthly for raw scans
-                    "yearly", 12L * 365L     // cap ~12 years
-            );
-            boolean truncated = false;
-            if (days != null && days > 0) {
-                long requested = days;
-                long cap = maxDays.getOrDefault(normalized, 365L);
-                if (requested > cap) {
-                    truncated = true;
-                    requested = cap;
-                }
-                from = to.minus(requested, ChronoUnit.DAYS);
-            } else {
-                switch (normalized) {
-                    case "daily": from = to.minus(30, ChronoUnit.DAYS); break;
-                    case "weekly": from = to.minus(8 * 7L, ChronoUnit.DAYS); break; // ~8 weeks
-                    case "monthly": from = to.minus(12, ChronoUnit.MONTHS); break; // 12 months
-                    case "quarterly": from = to.minus(8 * 3L, ChronoUnit.MONTHS); break; // 8 quarters (~2y)
-                    case "yearly": from = to.minus(5, ChronoUnit.YEARS); break; // 5 years
-                    default: from = to.minus(30, ChronoUnit.DAYS);
-                }
-            }
-
-            // Attempt optimized daily counts via native aggregation (recipient role/manager filters)
-            java.util.Map<String,Integer> dailySeries = new java.util.LinkedHashMap<>();
-            try {
-                java.util.List<Object[]> rows = recognitionRepository.countByDayFiltered(from, to, role, managerId);
-                for (Object[] row : rows) {
-                    String day = row[0] == null ? null : row[0].toString();
-                    Number cntN = (Number) row[1];
-                    if (day != null) dailySeries.put(day, cntN == null ? 0 : cntN.intValue());
-                }
-            } catch (Exception aggEx) {
-                log.warn("Fallback to in-memory dailySeries aggregation due to error: {}", aggEx.getMessage());
-            }
-
-            // Fallback if native query returned nothing (e.g., no recognitions or error)
-            if (dailySeries.isEmpty()) {
-                Map<String, Object> insights = managerId != null ?
-                        insightsService.generateInsightsForManager(managerId, from, to) :
-                        (role != null ? insightsService.generateInsightsForRole(role, from, to) : insightsService.generateInsights(from, to));
-                if (insights != null) {
-                    @SuppressWarnings("unchecked")
-                    Map<String,Integer> tmp = (Map<String,Integer>) insights.get("timeSeriesByDay");
-                    if (tmp != null) dailySeries.putAll(tmp);
-                }
-                if (dailySeries.isEmpty()) {
-                    // final fallback raw scan
-                    java.time.ZoneId zid = java.time.ZoneId.of("UTC");
-                    java.util.List<org.example.model.Recognition> recs = recognitionRepository.findAllBetween(from, to);
-                    for (org.example.model.Recognition r : recs) {
-                        Instant sent = r.getSentAt();
-                        if (sent != null) {
-                            String day = sent.atZone(zid).toLocalDate().toString();
-                            dailySeries.put(day, dailySeries.getOrDefault(day, 0) + 1);
-                        }
-                    }
-                }
-            }
-
-            // Gap fill daily series so downstream weekly/monthly etc. produce continuous buckets
-            if (!dailySeries.isEmpty()) {
-                java.time.LocalDate start = java.time.LocalDate.parse(dailySeries.keySet().iterator().next());
-                java.time.LocalDate end = java.time.LocalDate.parse(dailySeries.keySet().stream().reduce((first, second) -> second).orElse(start.toString()));
-                // ensure coverage from computed 'from' instant, not only existing first key
-                java.time.LocalDate requestedStart = from.atZone(java.time.ZoneId.of("UTC")).toLocalDate();
-                if (requestedStart.isBefore(start)) start = requestedStart;
-                java.time.LocalDate requestedEnd = to.atZone(java.time.ZoneId.of("UTC")).toLocalDate();
-                if (requestedEnd.isAfter(end)) end = requestedEnd;
-                for (java.time.LocalDate d = start; !d.isAfter(end); d = d.plusDays(1)) {
-                    dailySeries.putIfAbsent(d.toString(), 0);
-                }
-                // Re-sort after gap fill
-                dailySeries = dailySeries.entrySet().stream().sorted(java.util.Map.Entry.comparingByKey()).collect(Collectors.toMap(java.util.Map.Entry::getKey, java.util.Map.Entry::getValue, (a,b)->a, java.util.LinkedHashMap::new));
-            }
-
-            dailySeries = sanitizeSeries(dailySeries);
-            Map<String, Integer> seriesMap = aggregateSeries(dailySeries, normalized);
-            seriesMap = sanitizeSeries(seriesMap);
-
-            if (seriesMap.isEmpty()) {
-                seriesMap.put(java.time.LocalDate.now().toString(), 0);
-            }
-
-            if ("json".equalsIgnoreCase(format)) {
-                java.util.List<java.util.Map<String,Object>> data = new java.util.ArrayList<>();
-                for (Map.Entry<String,Integer> e : seriesMap.entrySet()) {
-                    java.util.Map<String,Object> point = new java.util.LinkedHashMap<>();
-                    point.put("bucket", e.getKey());
-                    point.put("count", e.getValue());
-                    data.add(point);
-                }
-                int total = 0; for (java.util.Map<String,Object> m : data) total += (int) m.get("count");
-                java.util.Map<String,Object> body = new java.util.LinkedHashMap<>();
-                body.put("series", normalized);
-                body.put("from", from.toString());
-                body.put("to", to.toString());
-                body.put("points", data);
-                body.put("total", total);
-                String json = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(body);
-                ResponseEntity.BodyBuilder builder = ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON);
-                if (truncated) builder.header("X-Range-Truncated", "true");
-                return builder.body(json.getBytes());
-            }
-            String xLabel = switch (normalized) {
-                case "daily" -> "day";
-                case "weekly" -> "week";
-                case "monthly" -> "month";
-                case "quarterly" -> "quarter";
-                case "yearly" -> "year";
-                default -> "day";
-            };
-            byte[] png = chartService.renderTimeSeriesChart(seriesMap, "Recognitions (" + normalized + ")", xLabel, "count");
-            ResponseEntity.BodyBuilder builder = ResponseEntity.ok().contentType(MediaType.IMAGE_PNG);
-            if (truncated) builder.header("X-Range-Truncated", "true");
-            return builder.body(png);
-        } catch (Exception ex) {
-            String json = "{\"status\":500,\"error\":\"GRAPH_ERROR\",\"message\":\"" + ex.getClass().getSimpleName() + ": " + ex.getMessage() + "\"}";
-            return ResponseEntity.status(500).contentType(MediaType.APPLICATION_JSON).body(json.getBytes());
+            Instant from = to.minus(effectiveDays, ChronoUnit.DAYS);
+            list = recognitionRepository.findAllBetweenWithRelations(from, to);
+        } else {
+            list = recognitionRepository.findAllWithRelations(Pageable.unpaged()).getContent();
         }
+        if (recipientId != null && !isAll(recipientId)) list = list.stream().filter(r -> recipientId.equals(r.getRecipientId())).toList();
+        if (senderId != null && !isAll(senderId)) list = list.stream().filter(r -> senderId.equals(r.getSenderId())).toList();
+        if (role != null && !role.isBlank() && !role.equalsIgnoreCase("all")) list = list.stream().filter(r -> r.getRecipient() != null && role.equalsIgnoreCase(r.getRecipient().getRole())).toList();
+        if (status != null && !status.isBlank() && !status.equalsIgnoreCase("all")) {
+            String statusNorm = status.trim().toUpperCase();
+            list = list.stream().filter(r -> {
+                String s = r.getApprovalStatus();
+                return s != null && statusNorm.equals(s.trim().toUpperCase());
+            }).toList();
+        }
+        if (category != null && !category.isBlank() && !category.equalsIgnoreCase("all")) {
+            String categoryNorm = category.trim().toLowerCase();
+            list = list.stream().filter(r -> r.getCategory() != null && r.getCategory().toLowerCase().contains(categoryNorm)).toList();
+        }
+        if (managerId != null && !isAll(managerId)) list = list.stream().filter(r -> r.getRecipient() != null && managerId.equals(r.getRecipient().getManagerId())).toList();
+        if (list.isEmpty()) {
+            return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=empty.toon")
+                .contentType(MediaType.parseMediaType("application/octet-stream"))
+                .body(new byte[0]);
+        }
+        byte[] bytes;
+        String fname = timestampedName("recognitions_export", "toon");
+        try {
+            bytes = toonExporter.export(list);
+            Files.createDirectories(Paths.get("artifacts/exports/toon/"));
+            Files.write(Paths.get("artifacts/exports/toon/", fname), bytes);
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(("TOON export failed: " + e.getMessage()).getBytes());
+        }
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=" + fname)
+                .contentType(MediaType.parseMediaType("application/octet-stream"))
+                .body(bytes);
     }
 
-    private Map<String,Integer> sanitizeSeries(Map<String,Integer> in) {
-        java.util.Map<String,Integer> out = new java.util.LinkedHashMap<>();
-        if (in == null) return out;
-        for (Map.Entry<String,Integer> e : in.entrySet()) {
-            if (e.getKey() == null) continue; // drop null key
-            out.put(e.getKey(), e.getValue() == null ? 0 : e.getValue());
+    // Unified export endpoint
+    @GetMapping("/export")
+    public ResponseEntity<?> export(@RequestParam String format,
+                               @RequestParam(required = false) Long recipientId,
+                               @RequestParam(required = false) Long senderId,
+                               @RequestParam(required = false) String role,
+                               @RequestParam(required = false) String status,
+                               @RequestParam(required = false) String category,
+                               @RequestParam(required = false) Long managerId,
+                               @RequestParam(required = false) Long days,
+                               HttpServletRequest request) {
+    List<Recognition> filteredList;
+    filteredList = recognitionRepository.findAllWithRelations(Pageable.unpaged()).getContent();
+    switch (format.toLowerCase()) {
+        case "csv" -> {
+            byte[] bytes;
+            try {
+                bytes = csvExporter.export(filteredList);
+            } catch (Exception e) {
+                return ResponseEntity.status(500).body(("CSV export failed: " + e.getMessage()).getBytes());
+            }
+            return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=recognitions_export.csv")
+                .contentType(MediaType.parseMediaType("text/csv"))
+                .body(bytes);
         }
-        return out;
+        case "json" -> {
+            List<RecognitionResponse> resp = filteredList.stream().map(EntityMapper::toRecognitionResponse).toList();
+            return ResponseEntity.ok(resp);
+        }
+        case "toon" -> {
+            byte[] bytes = toonExporter.export(filteredList);
+            return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=recognitions_export.toon")
+                .contentType(MediaType.parseMediaType("application/octet-stream"))
+                .body(bytes);
+        }
+        default -> {
+            return ResponseEntity.badRequest().body(Map.of("error", "Invalid format: " + format));
+        }
+    }
+}
+
+    // --- Graph ---
+    @GetMapping(value = "/graph", produces = MediaType.IMAGE_PNG_VALUE)
+    public ResponseEntity<byte[]> graph(
+            @RequestParam(required = false) Long id,
+            @RequestParam(required = false) UUID uuid,
+            @RequestParam(required = false) String name,
+            @RequestParam(required = false) Long unitId,
+            @RequestParam(required = false) String role,
+            @RequestParam(required = false) String sender,
+            @RequestParam(required = false) String receiver,
+            @RequestParam(required = false) String manager,
+            @RequestParam(required = false) String category,
+            @RequestParam(required = false) Integer points,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String type,
+            @RequestParam(required = false, defaultValue = "days") String groupBy,
+            @RequestParam(required = false, defaultValue = "10") Integer iterations,
+            HttpServletRequest request) throws Exception {
+        List<Recognition> allRecognitions = recognitionRepository.findAllWithRelations(Pageable.unpaged()).getContent();
+        // Filter by params
+        List<Recognition> filtered = allRecognitions.stream()
+            .filter(r -> id == null || r.getRecipientId() != null && r.getRecipientId().equals(id))
+            .filter(r -> unitId == null || unitId.toString().equalsIgnoreCase("all") || r.getRecipient() != null && unitId.equals(r.getRecipient().getUnitId()))
+            .filter(r -> role == null || role.equalsIgnoreCase("all") || (r.getLevel() != null && r.getLevel().equalsIgnoreCase(role)))
+            .filter(r -> points == null || points.toString().equalsIgnoreCase("all") || (r.getAwardPoints() != null && r.getAwardPoints().equals(points)))
+            .filter(r -> status == null || status.equalsIgnoreCase("all") || (r.getApprovalStatus() != null && r.getApprovalStatus().equalsIgnoreCase(status)))
+            .toList();
+        // Map to DTOs
+        List<RecognitionChartDTO> chartData = filtered.stream()
+            .map(r -> new RecognitionChartDTO(r.getSentAt(), r.getAwardPoints(), r.getRecipientId(), r.getSenderId(), r.getApprovalStatus(), r.getLevel()))
+            .toList();
+        // Group by time bucket
+        java.util.Map<String, Integer> timeSeries = new java.util.LinkedHashMap<>();
+        for (int i = iterations - 1; i >= 0; i--) {
+            String label;
+            java.time.LocalDate bucketDate;
+            switch (groupBy.toLowerCase()) {
+                case "weeks" -> {
+                    bucketDate = java.time.LocalDate.now().minusWeeks(i);
+                    label = bucketDate.with(java.time.DayOfWeek.MONDAY).toString();
+                }
+                case "months" -> {
+                    bucketDate = java.time.LocalDate.now().minusMonths(i).withDayOfMonth(1);
+                    label = bucketDate.toString();
+                }
+                case "years" -> {
+                    bucketDate = java.time.LocalDate.now().minusYears(i).withDayOfYear(1);
+                    label = String.valueOf(bucketDate.getYear());
+                }
+                default -> {
+                    bucketDate = java.time.LocalDate.now().minusDays(i);
+                    label = bucketDate.toString();
+                }
+            }
+            timeSeries.put(label, 0);
+        }
+        for (RecognitionChartDTO r : chartData) {
+            java.time.Instant sent = r.getSentAt();
+            if (sent == null) continue;
+            java.time.LocalDate sentDate = sent.atZone(java.time.ZoneOffset.UTC).toLocalDate();
+            String label;
+            switch (groupBy.toLowerCase()) {
+                case "weeks" -> label = sentDate.with(java.time.DayOfWeek.MONDAY).toString();
+                case "months" -> label = sentDate.withDayOfMonth(1).toString();
+                case "years" -> label = String.valueOf(sentDate.getYear());
+                default -> label = sentDate.toString();
+            }
+            timeSeries.computeIfPresent(label, (k, v) -> v + 1);
+        }
+        String title = "Recognitions";
+        String yLabel = "count";
+        byte[] png = chartService.renderTimeSeriesChart(timeSeries, title, groupBy, yLabel);
+        String fname = "recognition_graph-" + java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("dd-MM-yyyy-HH.mm")) + ".png";
+        fileStorageService.storeGraph(fname, png);
+        return ResponseEntity.ok().contentType(MediaType.IMAGE_PNG).body(png);
     }
 
-    // Helper to aggregate daily counts into requested granularity
-    private Map<String, Integer> aggregateSeries(Map<String, Integer> daily, String series) {
-        if (daily == null) return java.util.Collections.emptyMap();
-        String s = series.toLowerCase(Locale.ROOT);
-        if ("daily".equals(s)) return daily; // already daily
-        java.util.Map<String, Integer> out = new java.util.LinkedHashMap<>();
-        WeekFields wf = WeekFields.ISO;
-        DateTimeFormatter monthFmt = DateTimeFormatter.ofPattern("yyyy-MM");
-        for (Map.Entry<String, Integer> e : daily.entrySet()) {
-            try {
-                LocalDate d = LocalDate.parse(e.getKey());
-                String bucket;
-                switch (s) {
-                    case "weekly": {
-                        int week = d.get(wf.weekOfWeekBasedYear());
-                        bucket = d.getYear() + "-W" + String.format("%02d", week);
-                        break;
-                    }
-                    case "monthly": {
-                        bucket = d.format(monthFmt); // yyyy-MM
-                        break;
-                    }
-                    case "quarterly": {
-                        int q = (d.getMonthValue() - 1) / 3 + 1;
-                        bucket = d.getYear() + "-Q" + q;
-                        break;
-                    }
-                    case "yearly": {
-                        bucket = String.valueOf(d.getYear());
-                        break;
-                    }
-                    default: {
-                        // unsupported series -> return daily unmodified
-                        return daily;
-                    }
-                }
-                out.put(bucket, out.getOrDefault(bucket, 0) + e.getValue());
-            } catch (Exception ex) {
-                // skip malformed date keys
-            }
-        }
-        return out;
+    // Helper method for 'all' check
+    private boolean isAll(Object param) {
+        if (param == null) return false;
+        if (param instanceof String s) return s.equalsIgnoreCase("all");
+        return false;
     }
 }

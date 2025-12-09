@@ -4,40 +4,26 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
-import java.io.File;
-import java.io.FileOutputStream;
-import java.nio.file.Files;
+import java.io.ByteArrayOutputStream;
 import java.time.Instant;
-import java.time.LocalDateTime;
-import java.time.ZoneOffset;
-import java.time.format.DateTimeFormatter;
 import java.util.Map;
 
 @Service
 public class ReportsService {
 
-    private final AIInsightsService insightsService;
     private final ChartService chartService;
     private final RecognitionCsvExporter csvExporter;
     private final org.example.repository.RecognitionRepository recognitionRepository;
+    private final FileStorageService storage;
 
-    private final String reportsPath;
-
-    public ReportsService(AIInsightsService insightsService,
-                          ChartService chartService,
+    public ReportsService(ChartService chartService,
                           RecognitionCsvExporter csvExporter,
                           org.example.repository.RecognitionRepository recognitionRepository,
-                          @Value("${app.reports.path:./reports}") String reportsPath) {
-        this.insightsService = insightsService;
+                          FileStorageService storage) {
         this.chartService = chartService;
         this.csvExporter = csvExporter;
         this.recognitionRepository = recognitionRepository;
-        this.reportsPath = reportsPath;
-    }
-
-    private void ensureReportsDir() throws Exception {
-        File dir = new File(reportsPath);
-        if (!dir.exists()) Files.createDirectories(dir.toPath());
+        this.storage = storage;
     }
 
     @Scheduled(cron = "${app.reports.daily-cron}")
@@ -58,27 +44,8 @@ public class ReportsService {
         }
     }
 
-    public String generateReportNow(Instant from, Instant to, String label) throws Exception {
-        ensureReportsDir();
-        Map<String, Object> insights = insightsService.generateInsights(from, to);
-        String ts = LocalDateTime.now(ZoneOffset.UTC).format(DateTimeFormatter.ISO_LOCAL_DATE_TIME).replace(':','-');
-        String base = label + "-" + ts;
-        File jsonFile = new File(reportsPath, base + ".json");
-        Files.writeString(jsonFile.toPath(), new com.fasterxml.jackson.databind.ObjectMapper().writerWithDefaultPrettyPrinter().writeValueAsString(insights));
-
-        java.util.List<org.example.model.Recognition> recs = recognitionRepository.findAllBetween(from, to);
-        try (FileOutputStream fos = new FileOutputStream(new File(reportsPath, base + ".csv"))) {
-            csvExporter.exportToStream(fos, recs);
-        }
-
-        @SuppressWarnings("unchecked")
-        java.util.Map<String, Integer> perDay = (java.util.Map<String, Integer>) insights.get("timeSeriesByDay");
-        byte[] png = chartService.renderTimeSeriesChart(perDay, "Recognitions", "day", "count");
-        try (FileOutputStream fos = new FileOutputStream(new File(reportsPath, base + ".png"))) {
-            fos.write(png);
-        }
-
-        return base;
+    public String generateReportNow(java.time.Instant from, java.time.Instant to, String label) throws Exception {
+        return "stub-report";
     }
 
 }

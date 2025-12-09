@@ -6,23 +6,18 @@ import org.knowm.xchart.CategoryChartBuilder;
 import org.knowm.xchart.style.Styler;
 import org.springframework.stereotype.Service;
 
-import javax.imageio.ImageIO;
-import java.awt.image.BufferedImage;
-import java.io.ByteArrayOutputStream;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 @Service
 public class ChartService {
-
     public byte[] renderTimeSeriesChart(Map<String, Integer> timeSeries, String title, String xLabel, String yLabel) throws Exception {
         if (timeSeries == null || timeSeries.isEmpty()) {
             timeSeries = new java.util.LinkedHashMap<>();
             timeSeries.put(java.time.LocalDate.now().toString(), 0);
         }
-        java.util.List<String> keys = new java.util.ArrayList<>(timeSeries.keySet());
-        java.util.List<Integer> values = new java.util.ArrayList<>(keys.size());
+        List<String> keys = new java.util.ArrayList<>(timeSeries.keySet());
+        List<Integer> values = new java.util.ArrayList<>(keys.size());
         for (String k : keys) {
             Integer v = timeSeries.get(k);
             values.add(v == null ? 0 : v);

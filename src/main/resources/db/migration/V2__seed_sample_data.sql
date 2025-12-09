@@ -1,96 +1,103 @@
--- V2: Seed recognition types, 100 employees, and ~1000 recognitions
--- Insert recognition types (ecard, ecard_with_points, award) - idempotent insert without relying on named constraint
-INSERT INTO recognition_type (type_name, created_by)
-SELECT v.type_name, v.created_by
-FROM (VALUES
-  ('ecard', 1),
-  ('ecard_with_points', 1),
-  ('award', 1)
-) AS v(type_name, created_by)
-WHERE NOT EXISTS (
-  SELECT 1 FROM recognition_type rt WHERE lower(rt.type_name) = lower(v.type_name)
-);
+-- Minimal, precise seed data for recognitions app
+-- Recognition Types (explicit IDs for FK integrity)
+INSERT INTO recognition_type (id, type_name, created_by, created_at) VALUES
+  (1, 'ecard', 1, now()),
+  (2, 'ecard_with_points', 1, now()),
+  (3, 'award', 1, now())
+ON CONFLICT (id) DO NOTHING;
 
--- Create 100 employees with improved data quality
+-- Employees: 2 managers, 2 teamleads under each, 4 employees under each teamlead
+-- Managers
+INSERT INTO employee (id, first_name, last_name, unit_id, manager_id, email, joining_date, role) VALUES
+  (1, 'Alice', 'Smith', 101, NULL, 'alice.smith@company.com', '2022-01-10', 'manager'),
+  (2, 'Bob', 'Johnson', 102, NULL, 'bob.johnson@company.com', '2022-01-15', 'manager');
+-- Teamleads under Alice (manager_id=1)
+INSERT INTO employee (id, first_name, last_name, unit_id, manager_id, email, joining_date, role) VALUES
+  (3, 'Carol', 'Williams', 101, 1, 'carol.williams@company.com', '2022-02-01', 'teamlead'),
+  (4, 'David', 'Brown', 101, 1, 'david.brown@company.com', '2022-02-02', 'teamlead');
+-- Teamleads under Bob (manager_id=2)
+INSERT INTO employee (id, first_name, last_name, unit_id, manager_id, email, joining_date, role) VALUES
+  (5, 'Eve', 'Davis', 102, 2, 'eve.davis@company.com', '2022-02-03', 'teamlead'),
+  (6, 'Frank', 'Miller', 102, 2, 'frank.miller@company.com', '2022-02-04', 'teamlead');
+-- Employees under each teamlead (4 per teamlead)
+-- Under Carol (3)
+INSERT INTO employee (id, first_name, last_name, unit_id, manager_id, email, joining_date, role) VALUES
+  (7, 'Grace', 'Moore', 101, 3, 'grace.moore@company.com', '2022-03-01', 'employee'),
+  (8, 'Hank', 'Taylor', 101, 3, 'hank.taylor@company.com', '2022-03-02', 'employee'),
+  (9, 'Ivy', 'Anderson', 101, 3, 'ivy.anderson@company.com', '2022-03-03', 'employee'),
+  (10, 'Jack', 'Thomas', 101, 3, 'jack.thomas@company.com', '2022-03-04', 'employee');
+-- Under David (4)
+INSERT INTO employee (id, first_name, last_name, unit_id, manager_id, email, joining_date, role) VALUES
+  (11, 'Kate', 'Jackson', 101, 4, 'kate.jackson@company.com', '2022-03-05', 'employee'),
+  (12, 'Leo', 'White', 101, 4, 'leo.white@company.com', '2022-03-06', 'employee'),
+  (13, 'Mia', 'Harris', 101, 4, 'mia.harris@company.com', '2022-03-07', 'employee'),
+  (14, 'Nina', 'Martin', 101, 4, 'nina.martin@company.com', '2022-03-08', 'employee');
+-- Under Eve (5)
+INSERT INTO employee (id, first_name, last_name, unit_id, manager_id, email, joining_date, role) VALUES
+  (15, 'Oscar', 'Lee', 102, 5, 'oscar.lee@company.com', '2022-03-09', 'employee'),
+  (16, 'Pam', 'Walker', 102, 5, 'pam.walker@company.com', '2022-03-10', 'employee'),
+  (17, 'Quinn', 'Hall', 102, 5, 'quinn.hall@company.com', '2022-03-11', 'employee'),
+  (18, 'Rita', 'Young', 102, 5, 'rita.young@company.com', '2022-03-12', 'employee');
+-- Under Frank (6)
+INSERT INTO employee (id, first_name, last_name, unit_id, manager_id, email, joining_date, role) VALUES
+  (19, 'Sam', 'King', 102, 6, 'sam.king@company.com', '2022-03-13', 'employee'),
+  (20, 'Tina', 'Scott', 102, 6, 'tina.scott@company.com', '2022-03-14', 'employee'),
+  (21, 'Uma', 'Green', 102, 6, 'uma.green@company.com', '2022-03-15', 'employee'),
+  (22, 'Vera', 'Baker', 102, 6, 'vera.baker@company.com', '2022-03-16', 'employee');
+
+-- Recognitions: each employee sends and receives a recognition from every other employee (no self-recognition)
 DO $$
 DECLARE
-  names TEXT[] := array[
-    'Alex Smith','Jordan Brown','Taylor Johnson','Casey Lee','Morgan Davis','Riley Martinez','Parker Wilson','Drew Anderson','Cameron Thomas','Avery Jackson',
-    'Sam Harris','Jamie King','Robin Green','Chris Hall','Dana Scott','Evan Young','Frank Wright','Gaby Wood','Hayden Baker','Ira Bell',
-    'Jesse Cox','Kris Ward','Lane Price','Max Stone','Noel Gray','Owen Ross','Quinn Perry','Reese Long','Shawn Fox','Toby Reed',
-    'Uma Lane','Vera Hale','Wes Neal','Yara Cruz','Zane Lowe','Ivy Hill','Bea Lane','Cal Moss','Dax Cole','Elsa Moss',
-    'Finn Gale','Gus Dale','Hugo Ford','Iris North','Jude Snow','Kara West','Lana Moss','Mia Hart','Nia Starr','Ola Beck',
-    'Paul Cain','Quin Ray','Rae Lynn','Shae Morn','Tia Vale','Uli Moss','Val Joy','Wyn Price','Xan Hale','Yol Hart',
-    'Zoe Lane','Ana Reed','Ben Holt','Cia Nash','Dev Roy','Eli Moss','Fay Dunn','Gia Reed','Hal Moss','Ian Ford',
-    'Joy Finn','Ken Stern','Lee Voss','Moe Dale','Ned Finn','Orr Hale','Pam West','Que Lee','Ron Vale','Sid Shaw',
-    'Taj Wynn','Una Dune','Vic Miles','Will Pace','Xia Fu','Yen Tao','Zed Park','Ada Bell','Bo Kent','Cy Pace',
-    'Dee Knox','Eon Rice','Fia West','Gio Park','Hua Lin','Ina Snow','Jax Cole','Kip Moss','Lio Frost','Moe Lake'
-  ];
-  i INT;
-  nm TEXT;
-  fn TEXT;
-  ln TEXT;
-BEGIN
-  IF (SELECT count(*) FROM employee) < 100 THEN
-    FOR i IN 1..100 LOOP
-      nm := names[i];
-      fn := split_part(nm, ' ', 1);
-      ln := split_part(nm, ' ', 2);
-      INSERT INTO employee (first_name, last_name, unit_id, manager_id, email, joining_date, role, terminated_at)
-      VALUES (
-        fn,
-        ln,
-        (1 + ((i-1) % 10)),
-        CASE WHEN i <= 10 THEN NULL WHEN i <= 30 THEN ((i - 1) % 10) + 1 ELSE ((1 + ((i - 1) % 30)) ) END,
-        lower(fn || '.' || ln || i || '@example.com'),
-        current_date - ((i % 100) + ((random()*365)::int))::int,
-        CASE WHEN i <= 10 THEN 'manager' WHEN i <= 30 THEN 'teamlead' ELSE 'employee' END,
-        -- about 10% of seeded employees are terminated at a random date in the past 2 years
-        CASE WHEN random() < 0.10 THEN (now() - ((365*2 * random())::int || ' days')::interval) ELSE NULL END
-      );
-    END LOOP;
-  END IF;
-END$$;
-
--- Insert recognitions: 10 per employee, random types and levels (gold/silver/bronze/diamond), spread over 3 years
-DO $$
-DECLARE
-  emp RECORD;
-  types INTEGER[] := array(SELECT id FROM recognition_type);
-  tcount INT := array_length(types,1);
-  i INT;
+  e1 INT;
+  e2 INT;
+  categories TEXT[] := ARRAY['Great Job','Awesome Work','Milestone Achieved','Team Player','Innovation'];
+  levels TEXT[] := ARRAY['gold','silver','bronze','diamond'];
+  type_ids INT[] := ARRAY[1,2,3];
+  idx INT := 0;
   points INT;
   status TEXT;
-  levels TEXT[] := array['gold','silver','bronze','diamond'];
-  days_offset INT;
+  level TEXT;
+  type_id INT;
+  rejection_reason TEXT;
 BEGIN
-  FOR emp IN SELECT id FROM employee LOOP
-    FOR i IN 1..10 LOOP
-      points := CASE WHEN random() < 0.5 THEN (1 + floor(random()*10))::int
-                     WHEN random() < 0.85 THEN (11 + floor(random()*40))::int
-                     WHEN random() < 0.98 THEN (51 + floor(random()*50))::int
-                     ELSE (101 + floor(random()*400))::int END;
-      -- increase PENDING/REJECTED rates for testing: 70% APPROVED, 20% PENDING, 10% REJECTED
-      status := CASE WHEN random() < 0.65 THEN 'APPROVED' WHEN random() < 0.93 THEN 'PENDING' ELSE 'REJECTED' END;
-      -- spread across ~3 years to avoid clustering
-      days_offset := floor(random()* (365*3))::int;
-      INSERT INTO recognitions (recognition_type_id, award_name, level, recipient_id, sender_id, sent_at, message, award_points, approval_status, rejection_reason)
-      VALUES (
-        types[1 + (floor(random()*tcount))::int],
-        CASE WHEN random() < 0.5 THEN 'Great Job' ELSE 'Awesome Work' END,
-        levels[1 + (floor(random()*array_length(levels,1)))::int],
-        emp.id,
-        (SELECT id FROM employee WHERE id != emp.id ORDER BY random() LIMIT 1),
-        now() - (days_offset || ' days')::interval,
-        'Thanks for your contribution!',
-        points,
-        status,
-        CASE WHEN status = 'REJECTED' THEN (array['Policy mismatch','Insufficient details','Out of scope','Duplicate entry'])[1 + floor(random()*4)::int] ELSE NULL END
-      );
+  FOR e1 IN 1..22 LOOP
+    FOR e2 IN 1..22 LOOP
+      IF e1 != e2 THEN
+        idx := idx + 1;
+        type_id := type_ids[(idx % 3) + 1];
+        level := CASE WHEN type_id = 3 THEN levels[(idx % 4) + 1] ELSE NULL END;
+        status := CASE WHEN (idx % 3) = 0 THEN 'APPROVED' WHEN (idx % 3) = 1 THEN 'PENDING' ELSE 'REJECTED' END;
+        -- Points logic: only 0, 5, 10, 20, 25, 30 allowed
+        IF type_id = 1 THEN -- ecard
+          points := 0;
+        ELSIF type_id = 2 THEN -- ecard_with_points
+          points := CASE WHEN (idx % 2) = 0 THEN 5 ELSE 10 END;
+        ELSIF type_id = 3 THEN -- award
+          IF level = 'bronze' OR level = 'diamond' THEN points := 20;
+          ELSIF level = 'silver' THEN points := 25;
+          ELSIF level = 'gold' THEN points := 30;
+          ELSE points := 20;
+          END IF;
+        END IF;
+        -- Rejection reason logic
+        IF status = 'REJECTED' THEN
+          rejection_reason := 'Policy mismatch';
+        ELSE
+          rejection_reason := NULL;
+        END IF;
+        INSERT INTO recognitions (recognition_type_id, category, level, recipient_id, sender_id, sent_at, message, award_points, approval_status, rejection_reason)
+        VALUES (
+          type_id,
+          categories[(idx % 5) + 1],
+          level,
+          e1, e2,
+          '2023-01-01'::timestamp + ((idx % 365) || ' days')::interval,
+          'Recognition from ' || e2 || ' to ' || e1,
+          points,
+          status,
+          rejection_reason
+        );
+      END IF;
     END LOOP;
   END LOOP;
 END$$;
-
--- Create indexes used by insights (also safe if already present)
-CREATE INDEX IF NOT EXISTS idx_recog_level ON recognitions(level);
-CREATE INDEX IF NOT EXISTS idx_recog_approval ON recognitions(approval_status);

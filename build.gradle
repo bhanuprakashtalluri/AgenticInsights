@@ -2,6 +2,7 @@ plugins {
     id 'java'
     id 'org.springframework.boot' version '3.2.6'
     id 'io.spring.dependency-management' version '1.1.0'
+    id 'org.flywaydb.flyway' version '9.22.3'
 }
 
 group = 'org.example'
@@ -41,11 +42,23 @@ dependencies {
     implementation 'org.knowm.xchart:xchart:3.8.1'
 
     // Java 8+ date/time support
-    implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310'
+    implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.15.3'
+
+    // Security and JWT
+    implementation 'org.springframework.boot:spring-boot-starter-security'
+    implementation 'io.jsonwebtoken:jjwt-api:0.12.3'
+    runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.12.3'
+    runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.12.3'
+    implementation 'org.springframework.security:spring-security-crypto:5.8.5'
+
+    // Jakarta Servlet API
+    implementation 'jakarta.servlet:jakarta.servlet-api:6.0.0'
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation platform('org.junit:junit-bom:5.10.0')
     testImplementation 'org.junit.jupiter:junit-jupiter'
+
+    developmentOnly 'org.springframework.boot:spring-boot-devtools'
 }
 
 tasks.withType(Test) {
@@ -57,4 +70,12 @@ tasks.named('bootRun') {
     if (project.hasProperty('args')) {
         args project.property('args').toString().split(',')
     }
+}
+
+flyway {
+    url = 'jdbc:postgresql://localhost:5432/recognitions'
+    user = 'postgres'
+    password = 'rmkec'
+    locations = ['classpath:db/migration']
+    cleanDisabled = false
 }
