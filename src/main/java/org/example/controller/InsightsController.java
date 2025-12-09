@@ -34,8 +34,28 @@ public class InsightsController {
     }
 
     @GetMapping
-    public Map<String, Object> globalInsights(@RequestParam(required = false) Long days) {
-        return java.util.Collections.emptyMap();
+    public Map<String, Object> globalInsights(@RequestParam(required = false) Long days, org.springframework.security.core.Authentication authentication) {
+        String role = authentication.getAuthorities().stream().findFirst().map(a -> a.getAuthority()).orElse("");
+        String email = authentication.getName();
+        Map<String, Object> result = new java.util.HashMap<>();
+        if (role.equals("ROLE_EMPLOYEE")) {
+            // Only show employee's own data
+            result.put("scope", "employee");
+            result.put("employeeEmail", email);
+        } else if (role.equals("ROLE_TEAMLEAD")) {
+            // Only show teamlead's team data
+            result.put("scope", "teamlead");
+            result.put("managerId", email); // Should resolve to managerId if needed
+        } else if (role.equals("ROLE_MANAGER")) {
+            // Only show manager's unit data
+            result.put("scope", "manager");
+            result.put("unitId", email); // Should resolve to unitId if needed
+        } else {
+            // Admin or fallback
+            result.put("scope", "admin");
+        }
+        // TODO: Add actual data aggregation logic here
+        return result;
     }
 
     @GetMapping(value = "/graph.png", produces = MediaType.IMAGE_PNG_VALUE)

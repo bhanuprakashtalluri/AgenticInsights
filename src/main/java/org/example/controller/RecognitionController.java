@@ -3,6 +3,7 @@ package org.example.controller;
 import org.example.dto.RecognitionResponse;
 import org.example.dto.RecognitionCreateRequest;
 import org.example.model.Recognition;
+import org.example.model.Employee;
 import org.example.repository.EmployeeRepository;
 import org.example.repository.RecognitionRepository;
 import org.example.repository.RecognitionTypeRepository;
@@ -33,6 +34,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import org.springframework.security.core.Authentication;
 
 @RestController
 @RequestMapping("/recognitions")
@@ -105,23 +107,36 @@ public class RecognitionController {
     }
 
     @GetMapping
-    public List<RecognitionResponse> list(@RequestParam(defaultValue = "0") int page,
-                              @RequestParam(defaultValue = "20") int size,
-                              @RequestParam(required = false) Long recipientId,
-                              @RequestParam(required = false) Long senderId,
-                              @RequestParam(required = false) UUID recipientUuid,
-                              @RequestParam(required = false) UUID senderUuid,
-                              HttpServletRequest request) {
+    public Page<RecognitionResponse> list(@RequestParam(defaultValue = "0") int page,
+                               @RequestParam(defaultValue = "20") int size,
+                               @RequestParam(required = false) Long senderId,
+                               @RequestParam(required = false) Long recipientId,
+                               Authentication authentication) {
         Pageable p = PageRequest.of(page, size);
+        List<Recognition> all = recognitionRepository.findAllWithRelations(p).getContent();
         Page<Recognition> pageResult;
-        if (recipientUuid != null) {
-            pageResult = employeeRepository.findByUuid(recipientUuid).map(e -> recognitionRepository.findAllByRecipientId(e.getId(), p)).orElseGet(() -> recognitionRepository.findAllWithRelations(Pageable.unpaged()));
-        } else if (senderUuid != null) {
-            pageResult = employeeRepository.findByUuid(senderUuid).map(e -> recognitionRepository.findAllBySenderId(e.getId(), p)).orElseGet(() -> recognitionRepository.findAllWithRelations(Pageable.unpaged()));
-        } else if (recipientId != null) pageResult = recognitionRepository.findAllByRecipientId(recipientId, p);
-        else if (senderId != null) pageResult = recognitionRepository.findAllBySenderId(senderId, p);
-        else pageResult = recognitionRepository.findAllWithRelations(p);
-        return pageResult.stream().map(EntityMapper::toRecognitionResponse).toList();
+        String role = authentication.getAuthorities().stream().findFirst().map(a -> a.getAuthority()).orElse("");
+        String email = authentication.getName();
+        if (role.equals("ROLE_EMPLOYEE")) {
+            Long employeeId = employeeRepository.findByEmail(email).map(Employee::getId).orElse(-1L);
+            all = all.stream().filter(r -> (r.getSender() != null && r.getSender().getId().equals(employeeId)) || (r.getRecipient() != null && r.getRecipient().getId().equals(employeeId))).toList();
+            pageResult = new org.springframework.data.domain.PageImpl<>(all, p, all.size());
+        } else if (role.equals("ROLE_TEAMLEAD")) {
+            Long managerId = employeeRepository.findByEmail(email).map(Employee::getId).orElse(-1L);
+            all = all.stream().filter(r -> r.getRecipient() != null && managerId.equals(r.getRecipient().getManagerId())).toList();
+            pageResult = new org.springframework.data.domain.PageImpl<>(all, p, all.size());
+        } else if (role.equals("ROLE_MANAGER")) {
+            Long unitId = employeeRepository.findByEmail(email).map(Employee::getUnitId).orElse(-1L);
+            all = all.stream().filter(r -> r.getRecipient() != null && unitId.equals(r.getRecipient().getUnitId())).toList();
+            pageResult = new org.springframework.data.domain.PageImpl<>(all, p, all.size());
+        } else {
+            pageResult = recognitionRepository.findAllWithRelations(p);
+        }
+        return pageResult.map(EntityMapper::toRecognitionResponse);
+    }
+
+    private Long getEmployeeIdByEmail(String email) {
+        return employeeRepository.findByEmail(email).map(Employee::getId).orElse(-1L);
     }
 
     // Unified get by ID or UUID (as request parameters)

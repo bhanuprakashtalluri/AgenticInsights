@@ -71,3 +71,11 @@ tasks.named('bootRun') {
         args project.property('args').toString().split(',')
     }
 }
+
+flyway {
+    url = 'jdbc:postgresql://localhost:5432/recognitions'
+    user = 'postgres'
+    password = 'rmkec'
+    locations = ['classpath:db/migration']
+    cleanDisabled = false
+}

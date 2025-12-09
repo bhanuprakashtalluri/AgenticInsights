@@ -251,7 +251,7 @@ const RecognitionTypeManagement: React.FC = () => {
                 {col.label}
                 {/* Add a circle for box-based filtering fields */}
                 {filterableKeys.includes(col.key) && (
-                  <span style={{ color: '#1976d2', marginLeft: 6, fontSize: '1rem', verticalAlign: 'middle' }}>●</span>
+                  <span style={{ color: '#070707', marginLeft: 6, fontSize: '1rem', verticalAlign: 'middle' }}>●</span>
                 )}
                 {/* Only show sort arrows for id and createdAt columns */}
                 {sortableArrowKeys.includes(col.key) && (

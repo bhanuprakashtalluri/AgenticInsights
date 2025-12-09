@@ -251,7 +251,7 @@ const EmployeeManagement: React.FC = () => {
         <input name="email" placeholder="Email" value={form.email} onChange={handleInputChange} required style={{ flex: '2 1 160px', fontSize: '0.7rem', padding: 6 }} />
         <select name="role" value={form.role} onChange={handleInputChange} required style={{ flex: '1 1 100px', fontSize: '0.7rem', padding: 6 }}>
           <option value="employee">Employee</option>
-          <option value="teamleader">Teamleader</option>
+          <option value="teamlead">Teamlead</option>
           <option value="manager">Manager</option>
         </select>
         <input name="unitId" placeholder="Unit ID" value={form.unitId} onChange={handleInputChange} style={{ flex: '1 1 70px', fontSize: '0.7rem', padding: 6 }} />
@@ -353,7 +353,7 @@ const EmployeeManagement: React.FC = () => {
                         <input name="email" value={editForm.email} onChange={handleEditInputChange} required style={{ fontSize: '0.7rem', padding: 6 }} />
                         <select name="role" value={editForm.role} onChange={handleEditInputChange} required style={{ fontSize: '0.7rem', padding: 6 }}>
                           <option value="employee">Employee</option>
-                          <option value="teamleader">Teamleader</option>
+                          <option value="teamlead">Teamlead</option>
                           <option value="manager">Manager</option>
                         </select>
                         <input name="unitId" value={editForm.unitId} onChange={handleEditInputChange} style={{ fontSize: '0.7rem', padding: 6 }} />
@@ -420,7 +420,7 @@ const PromoteButton: React.FC<{ emp: any; onPromote: () => void }> = ({ emp, onP
     <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
       <select value={newRole} onChange={e => setNewRole(e.target.value)} disabled={promoting} style={{ fontSize: '0.7rem', padding: '4px 8px', borderRadius: 4 }}>
         <option value="employee">Employee</option>
-        <option value="teamleader">Teamleader</option>
+        <option value="teamlead">Teamlead</option>
         <option value="manager">Manager</option>
       </select>
       <button onClick={handlePromote} disabled={promoting || newRole === emp.role} style={{ background: '#ffa000', color: '#fff', border: 'none', borderRadius: 6, padding: '6px 16px', fontSize: '0.7rem', cursor: 'pointer', fontWeight: 500 }}>Promote</button>

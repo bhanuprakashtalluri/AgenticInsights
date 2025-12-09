@@ -1,77 +1,69 @@
-# Authentication, Refresh Tokens, Employee Management, and Audit Logging
+# Authentication, Session, Employee Management, and Audit Logging (Current State)
 
 ## Authentication Flow
-- Users log in via `/api/auth/login` with username and password.
-- On success, a JWT token is issued for API access.
+- Users log in via `/api/auth/login` with username (email) and password.
+- On success, a session cookie is issued for API and UI access.
 - On failure, an audit log is created for the attempt.
 
-## Refresh Token Flow
-- Users can request a new access token via `/api/auth/refresh` with their refresh token.
-- On success, a new JWT and refresh token are issued, and the refresh token is updated in the database.
-- On failure, an audit log is created for the attempt.
+## Password Update
+- Users can update their password via `/api/auth/update-password`.
+- Passwords are stored hashed (BCrypt) in the database.
+- Audit logs are created for password changes.
 
 ## Employee Management
-- Only managers can add employees. There is no public registration endpoint for employees.
-- Employee creation should be handled via a protected manager endpoint.
+- Only managers and admins can add employees. There is no public registration endpoint for employees.
+- Employee creation is handled via protected endpoints.
 
 ## Audit Logging
-- All login and refresh actions are logged in the `AuditLog` table.
-- Each log entry records username, action (LOGIN_SUCCESS, LOGIN_FAIL, REFRESH_SUCCESS, REFRESH_FAIL), timestamp, and details.
+- All login and password update actions are logged in the `AuditLog` table.
+- Each log entry records username, action (LOGIN_SUCCESS, LOGIN_FAIL, PASSWORD_UPDATE), timestamp, and details.
 
 ## Example Endpoints
 - `POST /api/auth/login` — Login with username and password.
   - **Request:**
     ```json
     {
-      "username": "employee1",
+      "username": "employee1@company.com",
       "password": "yourpassword"
     }
     ```
   - **Response:**
     ```json
     {
-      "token": "<JWT token>"
+      "email": "employee1@company.com",
+      "role": "EMPLOYEE"
     }
     ```
   - **Usage:**
-    Use the returned token in the `Authorization: Bearer <token>` header for all protected endpoints.
+    Use the session cookie for all protected endpoints.
 
-- `POST /api/auth/refresh` — Refresh access token using refresh token.
+- `PUT /api/auth/update-password` — Update password for user.
   - **Request:**
     ```json
     {
-      "refreshToken": "<refresh token>"
+      "email": "employee1@company.com",
+      "newPassword": "newsecurepassword"
     }
     ```
   - **Response:**
     ```json
     {
-      "token": "<new JWT token>"
+      "status": "success"
     }
     ```
   - **Usage:**
-    Use the new token for continued access. The refresh token is rotated and updated in the database.
-
-- `POST /api/manager/employees` — Manager-only endpoint to add employees.
-  - **Request:**
-    ```json
-    {
-      "username": "newemployee",
-      "password": "securepassword",
-      "roles": ["EMPLOYEE"]
-    }
-    ```
-  - **Authorization:**
-    Requires a valid manager JWT token in the `Authorization: Bearer <token>` header.
+    Password is updated and stored as a BCrypt hash.
 
 ## Checking Authentication
-- For any protected endpoint, include the JWT token in the `Authorization` header:
-  ```http
-  Authorization: Bearer <token>
-  ```
-- If the token is valid and the user has the required role, access is granted. Otherwise, a 401 Unauthorized or 403 Forbidden response is returned.
+- For any protected endpoint, include the session cookie.
+- If the session is valid and the user has the required role, access is granted. Otherwise, a 401 Unauthorized or 403 Forbidden response is returned.
 
 ## Security Notes
-- JWT tokens are used for stateless authentication.
-- Refresh tokens are stored per user and rotated on use.
+- Session cookies are used for authentication.
+- Passwords are hashed using BCrypt.
 - Audit logs provide traceability for all authentication and management actions.
+
+---
+
+*Legacy JWT/refresh token flow is no longer used. All authentication is now session-based.*
+

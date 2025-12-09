@@ -35,6 +35,8 @@ public interface RecognitionRepository extends JpaRepository<Recognition, Long> 
 
     Page<Recognition> findAllBySenderId(Long senderId, Pageable pageable);
 
+    Page<Recognition> findAllBySenderIdOrRecipientId(Long senderId, Long recipientId, Pageable pageable);
+
     // --- Search ---
     Page<Recognition> findByRecipient_UnitId(Long unitId, Pageable pageable);
 

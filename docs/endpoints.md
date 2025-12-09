@@ -1,342 +1,335 @@
-# API Endpoints Documentation
+# API Endpoints Documentation (Current State)
+
+This document lists all major API endpoints for the backend as of December 9, 2025. For each endpoint, you will find:
+- **URL**
+- **HTTP Method**
+- **Required Headers**
+- **Query/Path Parameters**
+- **Request Body (if applicable)**
+- **Response**
+- **Role-based Access**
+- **Description**
 
 ---
 
-## Admin
+## 1. Auth Endpoints (`/api/auth`)
 
-### Export Database
-- **URL:** `/admin/export?format=csv|json|toon`
-- **Method:** GET
-- **Params:**
-  - `format=csv|json|toon` (required)
-- **Description:** Export the entire database in the selected format.
-- **Authorization:** Manager only (`Authorization: Bearer <manager token>`)
-
-### Import Database
-- **URL:** `/admin/import`
-- **Method:** POST
-- **Params:**
-  - `format=csv|json|toon` (required)
-- **Body:** File upload (CSV, JSON, or TOON)
-- **Description:** Import data into the database from a file.
-- **Authorization:** Manager only (`Authorization: Bearer <manager token>`)
-
-### Sequence Repair (Admin/DB)
-- **Migration:** `V3__fix_employee_id_seq.sql`
-- **Description:** Resets all main table sequences (employee, recognition_type, recognitions) to the next available value after manual data changes or restores. Prevents duplicate key errors on inserts.
-- **Authorization:** Manager only
-
----
-
-## Employee
-
-### List Employees
-- **URL:** `/employees`
-- **Method:** GET
-- **Params:**
-  - `page` (default: 0)
-  - `size` (default: 20)
-  - `unitId` (optional, or `unitId=all`)
-  - `role` (optional, or `role=all`)
-- **Description:** List all employees, with optional filtering by unit or role.
-- **Authorization:** Teamleader or manager (`Authorization: Bearer <teamleader|manager token>`)
-
-### Search Employees
-- **URL:** `/employees/search`
-- **Method:** GET
-- **Params:**
-  - `id` (optional)
-  - `uuid` (optional)
-  - `name` (optional)
-  - `unitId` (optional, or `unitId=all`)
-  - `role` (optional, or `role=all`)
-  - `page` (default: 0)
-  - `size` (default: 20)
-- **Description:** Search employees by id, uuid, name, unit, or role.
-- **Authorization:** Teamleader or manager
-
-### Create Employee
-- **URL:** `/employees`
-- **Method:** POST
+### POST `/api/auth/login`
+- **Headers:** `Content-Type: application/json`
 - **Body:**
-```json
-{
-  "firstName": "Grace",
-  "lastName": "Moore",
-  "unitId": 101,
-  "managerId": 3,
-  "email": "grace.moore@company.com",
-  "joiningDate": "2022-03-01",
-  "role": "employee"
-}
-```
+  ```json
+  {
+    "username": "user@email.com",
+    "password": "Password123"
+  }
+  ```
+- **Response:** 200 OK (session cookie set), 401 Unauthorized
+- **Roles:** All
+- **Description:** Login with username (email) and password. Sets session cookie.
+
+### PUT `/api/auth/update-password`
+- **Headers:** `Content-Type: application/x-www-form-urlencoded`
+- **Params:** `email`, `newPassword`
+- **Response:** 200 OK, 404 Not Found
+- **Roles:** All
+- **Description:** Update password for user by email.
+
+### POST `/api/auth/sync-users`
+- **Headers:** None
+- **Response:** 200 OK
+- **Roles:** Admin only
+- **Description:** Sync user table with employee table.
+
+### GET `/api/auth/me`
+- **Headers:** Session cookie
+- **Response:**
+  ```json
+  {
+    "email": "user@email.com",
+    "role": "ADMIN"
+  }
+  ```
+- **Roles:** All
+- **Description:** Get current authenticated user info.
+
+---
+
+## 2. Employee Endpoints (`/employees`)
+
+### POST `/employees`
+- **Headers:** `Content-Type: application/json`
+- **Body:**
+  ```json
+  {
+    "firstName": "Alice",
+    "lastName": "Smith",
+    "email": "alice.smith@company.com",
+    "role": "MANAGER",
+    "unitId": 1,
+    "managerId": 2,
+    "joiningDate": "2025-01-01"
+  }
+  ```
+- **Response:** 201 Created, Employee object
+- **Roles:** Admin, Manager
 - **Description:** Create a new employee.
-- **Authorization:** Manager only
 
-### Update Employee
-- **URL:** `/employees/single?id=7` or `/employees/single?uuid=...`
-- **Method:** PUT
+### GET `/employees`
+- **Headers:** Session cookie
+- **Params:** `page`, `size`, `role`, `managerId`, `unitId` (optional)
+- **Response:** Page of Employee objects
+- **Roles:**
+  - **Employee:** Only sees their own info
+  - **Teamlead:** Only sees employees where `managerId` matches their own ID
+  - **Manager:** Only sees employees where `unitId` matches their own unit
+  - **Admin:** Sees all employees
+- **Description:** List employees, filtered by role-based access.
+
+### GET `/employees/single`
+- **Headers:** Session cookie
+- **Params:** `id` or `uuid`
+- **Response:** Employee object
+- **Roles:** All (EMPLOYEE only sees own info)
+- **Description:** Get employee by ID or UUID.
+
+### PUT `/employees/single`
+- **Headers:** `Content-Type: application/json`, Session cookie
+- **Params:** `id` or `uuid`
 - **Body:**
-```json
-{
-  "firstName": "Grace",
-  "lastName": "Moore",
-  "unitId": 101,
-  "managerId": 3,
-  "email": "grace.moore@company.com",
-  "joiningDate": "2022-03-01",
-  "role": "employee"
-}
-```
-- **Description:** Update an employee by id or uuid.
-- **Authorization:** Teamleader or manager
+  ```json
+  {
+    "firstName": "Alice",
+    "lastName": "Smith",
+    "email": "alice.smith@company.com",
+    "role": "MANAGER",
+    "unitId": 1,
+    "managerId": 2,
+    "joiningDate": "2025-01-01"
+  }
+  ```
+- **Response:** 200 OK, Employee object
+- **Roles:** Admin, Manager
+- **Description:** Update employee info.
 
-### Delete Employee
-- **URL:** `/employees/single?id=7` or `/employees/single?uuid=...`
-- **Method:** DELETE
-- **Description:** Delete an employee by id or uuid.
-- **Authorization:** Manager only
+### DELETE `/employees/single`
+- **Headers:** Session cookie
+- **Params:** `id` or `uuid`
+- **Response:** 204 No Content
+- **Roles:** Admin, Manager
+- **Description:** Delete employee.
 
 ---
 
-## Recognition Types
+## 3. Recognition Endpoints (`/recognitions`)
 
-### List Recognition Types
-- **URL:** `/recognitiontype`
-- **Method:** GET
-- **Params:**
-  - `page` (default: 0)
-  - `size` (default: 20)
-- **Description:** List all recognition types.
-- **Authorization:** Manager only
-
-### Search Recognition Types
-- **URL:** `/recognitiontype/search`
-- **Method:** GET
-- **Params:**
-  - `id` (optional)
-  - `uuid` (optional)
-  - `name` (optional)
-  - `page` (default: 0)
-  - `size` (default: 20)
-- **Description:** Search recognition types by id, uuid, or name.
-- **Authorization:** Manager only
-
-### Create Recognition Type
-- **URL:** `/recognitiontype`
-- **Method:** POST
+### POST `/recognitions`
+- **Headers:** `Content-Type: application/json`, Session cookie
 - **Body:**
-```json
-{
-  "typeName": "award"
-}
-```
-- **Description:** Create a new recognition type.
-- **Authorization:** Manager only
-
-### Update Recognition Type
-- **URL:** `/recognitiontype/single?id=1` or `/recognitiontype/single?uuid=...`
-- **Method:** PUT
-- **Body:**
-```json
-{
-  "typeName": "ecard_with_points"
-}
-```
-- **Description:** Update a recognition type by id or uuid.
-- **Authorization:** Manager only
-
-### Delete Recognition Type
-- **URL:** `/recognitiontype/single?id=1` or `/recognitiontype/single?uuid=...`
-- **Method:** DELETE
-- **Description:** Delete a recognition type by id or uuid.
-- **Authorization:** Manager only
-
----
-
-## Recognitions
-
-### List Recognitions
-- **URL:** `/recognitions`
-- **Method:** GET
-- **Params:**
-  - `page` (default: 0)
-  - `size` (default: 20)
-  - `recipientId`, `senderId`, `recipientUuid`, `senderUuid` (optional)
-- **Description:** List all recognitions, with optional filtering by sender/recipient.
-- **Authorization:** Teamleader or manager
-
-### Search Recognitions
-- **URL:** `/recognitions/search`
-- **Method:** GET
-- **Params:**
-  - `id`, `uuid`, `name`, `unitId`, `typeId`, `points`, `role`, `status`, `category`, `page`, `size` (all optional, use `all` for any param to include all values)
-- **Description:** Search recognitions by any combination of filters.
-- **Authorization:** Teamleader or manager
-
-### Create Recognition
-- **URL:** `/recognitions`
-- **Method:** POST
-- **Body:**
-```json
-{
-  "recognitionTypeId": 3,
-  "recipientId": 7,
-  "senderId": 8,
-  "category": "Great Job",
-  "level": "gold",
-  "message": "Excellent teamwork!",
-  "awardPoints": 30,
-  "sentAt": "2025-11-01T10:00:00Z"
-}
-```
+  ```json
+  {
+    "senderId": 1,
+    "recipientId": 2,
+    "category": "Appreciation",
+    "level": "Gold",
+    "message": "Great job!",
+    "awardPoints": 10,
+    "sentAt": "2025-12-09T10:00:00Z"
+  }
+  ```
+- **Response:** 201 Created, Recognition object
+- **Roles:** All
 - **Description:** Create a new recognition.
-- **Authorization:** Employee, teamleader, or manager (employees can only send, not update/delete)
 
-### Update Recognition
-- **URL:** `/recognitions/single?id=1` or `/recognitions/single?uuid=...`
-- **Method:** PUT
-- **Body:**
-```json
-{
-  "category": "Milestone Achieved",
-  "level": "silver",
-  "message": "Great milestone!",
-  "awardPoints": 25,
-  "approvalStatus": "APPROVED"
-}
-```
-- **Description:** Update a recognition by id or uuid.
-- **Authorization:** Only the manager of the respective employee can perform this action (`Authorization: Bearer <manager token>`)
+### GET `/recognitions`
+- **Headers:** Session cookie
+- **Params:** `page`, `size`, `senderId`, `recipientId` (optional)
+- **Response:** Page of Recognition objects
+- **Roles:**
+  - **Employee:** Only sees recognitions sent/received by them
+  - **Teamlead:** Only sees recognitions for their team
+  - **Manager:** Only sees recognitions for their unit
+  - **Admin:** Sees all recognitions
+- **Description:** List recognitions, filtered by role-based access.
 
-### Delete Recognition
-- **URL:** `/recognitions/single?id=1` or `/recognitions/single?uuid=...`
-- **Method:** DELETE
-- **Description:** Delete a recognition by id or uuid.
-- **Authorization:** Only the manager of the respective employee can perform this action
+### GET `/recognitions/single`
+- **Headers:** Session cookie
+- **Params:** `id` or `uuid`
+- **Response:** Recognition object
+- **Roles:** All (EMPLOYEE only if sender/recipient)
+- **Description:** Get recognition by ID or UUID.
 
-### Approve/Reject Recognition
-- **URL:** `/recognitions/approve?id=1` or `/recognitions/approve?uuid=...`
-- **Method:** PATCH
-- **Description:** Approve a recognition by id or uuid.
-- **Authorization:** Only the manager of the respective employee can perform this action
+### PUT `/recognitions/single`
+- **Headers:** `Content-Type: application/json`, Session cookie
+- **Params:** `id` or `uuid`
+- **Body:** Recognition object
+- **Response:** 200 OK, Recognition object
+- **Roles:** All (EMPLOYEE only if sender/recipient)
+- **Description:** Update recognition.
 
-- **URL:** `/recognitions/reject?id=1` or `/recognitions/reject?uuid=...`
-- **Method:** PATCH
-- **Body:**
-```json
-{
-  "reason": "Policy mismatch"
-}
-```
-- **Description:** Reject a recognition by id or uuid, with a reason.
-- **Authorization:** Only the manager of the respective employee can perform this action
-
-### Export Recognitions
-- **URL:** `/recognitions/export?format=csv|json|toon&recipientId=all&senderId=all&role=all&status=all&category=all&managerId=all&days=30`
-- **Method:** GET
-- **Description:** Export recognitions in the selected format, with all filters as params. Use `all` to include all values for a filter.
-- **Authorization:** Teamleader or manager
-
-### Graph Recognitions
-- **URL:** `/recognitions/graph?groupBy=weeks&iterations=10&role=all&status=all&category=all`
-- **Method:** GET
-- **Produces:** image/png
-- **Params:**
-  - `groupBy` (days, weeks, months, years; default: days)
-  - `iterations` (number of time units to include, e.g. 10 for last 10 weeks)
-  - All other filters: `id`, `uuid`, `name`, `unitId`, `role`, `sender`, `receiver`, `manager`, `category`, `points`, `status`, `type` (all optional, use `all` to include all values)
-- **Description:** Get a PNG graph of recognitions, grouped by the selected time frame and filters. Use `all` to include all values for a filter.
-- **Authorization:** Teamleader or manager
+### DELETE `/recognitions/single`
+- **Headers:** Session cookie
+- **Params:** `id` or `uuid`
+- **Response:** 204 No Content
+- **Roles:** Admin, Manager
+- **Description:** Delete recognition.
 
 ---
 
-## Leaderboard
+## 4. Recognition Type Endpoints (`/recognition-types`)
 
-### Top Senders
-- **URL:** `/leaderboard/top-senders?size=10&page=0&days=30&role=employee`
-- **Method:** GET
-- **Description:** Get the top senders leaderboard, with optional filters.
-- **Authorization:** Teamleader or manager
+### POST `/recognition-types`
+- **Headers:** `Content-Type: application/json`, Session cookie
+- **Body:** RecognitionType object
+- **Response:** 201 Created, RecognitionType object
+- **Roles:** Admin, Manager
+- **Description:** Create a new recognition type.
 
-### Top Recipients
-- **URL:** `/leaderboard/top-recipients?size=10&page=0&days=30&role=employee`
-- **Method:** GET
-- **Description:** Get the top recipients leaderboard, with optional filters.
-- **Authorization:** Teamleader or manager
+### GET `/recognition-types`
+- **Headers:** Session cookie
+- **Response:** Page of RecognitionType objects
+- **Roles:** All
+- **Description:** List recognition types.
 
----
+### GET `/recognition-types/single`
+- **Headers:** Session cookie
+- **Params:** `id` or `uuid`
+- **Response:** RecognitionType object
+- **Roles:** All
+- **Description:** Get recognition type by ID or UUID.
 
-## Metrics
+### PUT `/recognition-types/single`
+- **Headers:** `Content-Type: application/json`, Session cookie
+- **Params:** `id` or `uuid`
+- **Body:** RecognitionType object
+- **Response:** 200 OK, RecognitionType object
+- **Roles:** Admin, Manager
+- **Description:** Update recognition type.
 
-### Metrics Summary
-- **URL:** `/metrics/summary?days=30`
-- **Method:** GET
-- **Description:** Get a summary of metrics for the given time window.
-- **Authorization:** Teamleader or manager
-
-### Status/Health
-- **URL:** `/metrics/statusup`
-- **Method:** GET
-- **Description:** Check the status of the server.
-- **Authorization:** Any authenticated user
-
----
-
-## Authentication & Authorization
-
-### Login
-- **URL:** `/api/auth/login`
-- **Method:** POST
-- **Body:**
-  ```json
-  {
-    "username": "employee1",
-    "password": "yourpassword"
-  }
-  ```
-- **Response:**
-  ```json
-  {
-    "token": "<JWT token>"
-  }
-  ```
-- **Usage:** Use the token in `Authorization: Bearer <token>` for all protected endpoints.
-
-### Refresh Token
-- **URL:** `/api/auth/refresh`
-- **Method:** POST
-- **Body:**
-  ```json
-  {
-    "refreshToken": "<refresh token>"
-  }
-  ```
-- **Response:**
-  ```json
-  {
-    "token": "<new JWT token>"
-  }
-  ```
-- **Usage:** Use the new token for continued access. The refresh token is rotated and updated in the database.
-
-### Add Employee (Manager Only)
-- **URL:** `/api/manager/employees`
-- **Method:** POST
-- **Body:**
-  ```json
-  {
-    "username": "newemployee",
-    "password": "securepassword",
-    "roles": ["EMPLOYEE"]
-  }
-  ```
-- **Authorization:** Requires a valid manager JWT token in the `Authorization: Bearer <token>` header.
+### DELETE `/recognition-types/single`
+- **Headers:** Session cookie
+- **Params:** `id` or `uuid`
+- **Response:** 204 No Content
+- **Roles:** Admin, Manager
+- **Description:** Delete recognition type.
 
 ---
 
-## Audit Logging
-- All login and refresh actions are logged in the `AuditLog` table.
-- Each log entry records username, action (LOGIN_SUCCESS, LOGIN_FAIL, REFRESH_SUCCESS, REFRESH_FAIL), timestamp, and details.
+## 5. Insights Endpoints (`/insights`)
+
+### GET `/insights`
+- **Headers:** Session cookie
+- **Params:** `days` (optional)
+- **Response:** Insights data
+- **Roles:** All
+- **Description:** Get global insights, filtered by role.
+
+### GET `/insights/graph.png`
+- **Headers:** Session cookie
+- **Params:** Various (see controller)
+- **Response:** PNG image
+- **Roles:** All
+- **Description:** Get global insights graph.
+
+### GET `/insights/employee/{employeeId}`
+- **Headers:** Session cookie
+- **Response:** Insights data for employee
+- **Roles:** All
+- **Description:** Get insights for a specific employee.
+
+### GET `/insights/unit/{unitId}`
+- **Headers:** Session cookie
+- **Response:** Insights data for unit
+- **Roles:** All
+- **Description:** Get insights for a specific unit.
+
+### GET `/insights/role`
+- **Headers:** Session cookie
+- **Params:** `role`
+- **Response:** Insights data for role
+- **Roles:** All
+- **Description:** Get insights for a specific role.
+
+### GET `/insights/role/graph.png`
+- **Headers:** Session cookie
+- **Params:** `role`
+- **Response:** PNG image
+- **Roles:** All
+- **Description:** Get graph for a specific role.
+
+### GET `/insights/manager/{managerId}`
+- **Headers:** Session cookie
+- **Response:** Insights data for manager
+- **Roles:** All
+- **Description:** Get insights for a specific manager.
+
+### GET `/insights/manager/{managerId}/graph.png`
+- **Headers:** Session cookie
+- **Response:** PNG image
+- **Roles:** All
+- **Description:** Get graph for a specific manager.
 
 ---
+
+## 6. Leaderboard Endpoints (`/leaderboard`)
+
+### GET `/leaderboard/top-senders`
+- **Headers:** Session cookie
+- **Response:** Leaderboard data
+- **Roles:** All
+- **Description:** Get top senders leaderboard.
+
+### GET `/leaderboard/top-recipients`
+- **Headers:** Session cookie
+- **Response:** Leaderboard data
+- **Roles:** All
+- **Description:** Get top recipients leaderboard.
+
+---
+
+## 7. Metrics Endpoints (`/metrics`)
+
+### GET `/metrics/summary`
+- **Headers:** Session cookie
+- **Response:** Metrics summary
+- **Roles:** All
+- **Description:** Get metrics summary.
+
+---
+
+## 8. Admin Endpoints (`/admin`)
+
+### POST `/admin/seed/run`
+- **Headers:** Session cookie
+- **Response:** 200 OK
+- **Roles:** Admin only
+- **Description:** Run seed (dev mode).
+
+### GET `/admin/dev-mode`
+- **Headers:** Session cookie
+- **Response:** Dev mode status
+- **Roles:** Admin only
+- **Description:** Get dev mode status.
+
+### PATCH `/admin/dev-mode`
+- **Headers:** Session cookie
+- **Body:** Dev mode status
+- **Response:** 200 OK
+- **Roles:** Admin only
+- **Description:** Set dev mode status.
+
+### GET `/admin/export`
+- **Headers:** Session cookie
+- **Response:** Exported data
+- **Roles:** Admin only
+- **Description:** Export data.
+
+---
+
+## Notes
+- All endpoints require authentication via session cookie.
+- Role-based access is strictly enforced for all major endpoints.
+- Employees only see their own info and recognitions.
+- Teamleads and managers see only their team's/unit's data.
+- Admins have full access.
+- For more details, see `endpoint_role_matrix.md`.
+
