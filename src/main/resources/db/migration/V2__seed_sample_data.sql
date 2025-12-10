@@ -45,6 +45,10 @@ INSERT INTO employee (id, first_name, last_name, unit_id, manager_id, email, joi
   (21, 'Uma', 'Green', 102, 6, 'uma.green@company.com', '2022-03-15', 'employee'),
   (22, 'Vera', 'Baker', 102, 6, 'vera.baker@company.com', '2022-03-16', 'employee');
 
+-- Add a default admin user
+INSERT INTO "user" (username, password, roles) VALUES
+  ('admin@company.com', '$2a$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', '{"ADMIN"}'); -- Password: Admin@123
+
 -- Recognitions: each employee sends and receives a recognition from every other employee (no self-recognition)
 DO $$
 DECLARE

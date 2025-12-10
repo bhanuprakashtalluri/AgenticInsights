@@ -24,6 +24,20 @@ spring:
   graphql:
     schema:
       locations: classpath:graphql/
+  ai:
+    openai:
+      api-key: ${GROQ_API_KEY}
+      base-url: https://api.groq.com/openai/v1
+      chat:
+        options:
+          model: llama-3.1-8b-instant
+          temperature: 0.7
+      embeddings:
+        options:
+          model: text-embedding-ada-002
+      cache:
+        type: caffeine
+        spec: maximumSize=500,expireAfterWrite=10m
 
 logging:
   level:
@@ -43,24 +57,3 @@ management:
     web:
       exposure:
         include: "health,info"
-
-springai:
-  groq:
-    api-key: ${api_key}
-    base-url: https://api.groq.com/openai/v1
-    model: openai/gpt-oss-20b
-  embeddings:
-    provider: pinecone
-    api-key: ${pinecone_key}
-    environment: us-east1-gcp
-    project: myteam-recognitions
-    index: recognitions-embeddings
-  cache:
-    type: caffeine
-    spec: maximumSize=500,expireAfterWrite=10m
-  audit:
-    enabled: true
-    datasource:
-      url: jdbc:postgresql://localhost:5432/recognitions
-      username: postgres
-      password: rmkec

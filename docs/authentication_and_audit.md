@@ -15,8 +15,8 @@
 - Employee creation is handled via protected endpoints.
 
 ## Audit Logging
-- All login and password update actions are logged in the `AuditLog` table.
-- Each log entry records username, action (LOGIN_SUCCESS, LOGIN_FAIL, PASSWORD_UPDATE), timestamp, and details.
+- All login, password update, and agent execution actions are logged in the `AuditLog` table.
+- Each log entry records username, action (LOGIN_SUCCESS, LOGIN_FAIL, PASSWORD_UPDATE, AGENT_EXECUTE_SUCCESS, AGENT_EXECUTE_DENIED), timestamp, and details.
 
 ## Example Endpoints
 - `POST /api/auth/login` — Login with username and password.
@@ -66,4 +66,3 @@
 ---
 
 *Legacy JWT/refresh token flow is no longer used. All authentication is now session-based.*
-

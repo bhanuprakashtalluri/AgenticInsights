@@ -10,6 +10,12 @@ import RecognitionTypesPage from './pages/RecognitionTypesPage';
 import PasswordUpdatePage from './pages/PasswordUpdatePage';
 import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import { useAuth, AuthProvider } from './services/auth';
+import MyDashboard from './pages/MyDashboard';
+import MyRecognitions from './pages/MyRecognitions';
+import TeamDashboard from './pages/TeamDashboard';
+import TeamRecognitions from './pages/TeamRecognitions';
+import UnitDashboard from './pages/UnitDashboard';
+import UnitRecognitions from './pages/UnitRecognitions';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode; roles?: string[] }> = ({ children, roles }) => {
   const { user } = useAuth();
@@ -35,7 +41,7 @@ function AppRoutes() {
         </ProtectedRoute>
       } />
       <Route path="/recognitions" element={
-        <ProtectedRoute roles={["admin", "manager", "teamlead"]}>
+        <ProtectedRoute roles={["admin", "manager", "teamlead", "employee"]}>
           <RecognitionsPage />
         </ProtectedRoute>
       } />
@@ -50,8 +56,38 @@ function AppRoutes() {
         </ProtectedRoute>
       } />
       <Route path="/recognition-types" element={
-        <ProtectedRoute roles={["admin"]}>
+        <ProtectedRoute roles={["admin", "manager"]}>
           <RecognitionTypesPage />
+        </ProtectedRoute>
+      } />
+      <Route path="/my-dashboard" element={
+        <ProtectedRoute roles={["manager", "teamlead", "employee"]}>
+          <MyDashboard />
+        </ProtectedRoute>
+      } />
+      <Route path="/my-recognitions" element={
+        <ProtectedRoute roles={["manager", "teamlead", "employee"]}>
+          <MyRecognitions />
+        </ProtectedRoute>
+      } />
+      <Route path="/team-dashboard" element={
+        <ProtectedRoute roles={["teamlead"]}>
+          <TeamDashboard />
+        </ProtectedRoute>
+      } />
+      <Route path="/team-recognitions" element={
+        <ProtectedRoute roles={["teamlead", "employee", "manager", "admin"]}>
+          <TeamRecognitions />
+        </ProtectedRoute>
+      } />
+      <Route path="/unit-dashboard" element={
+        <ProtectedRoute roles={["manager"]}>
+          <UnitDashboard />
+        </ProtectedRoute>
+      } />
+      <Route path="/unit-recognitions" element={
+        <ProtectedRoute roles={["manager"]}>
+          <UnitRecognitions />
         </ProtectedRoute>
       } />
       <Route path="*" element={<NotFound />} />

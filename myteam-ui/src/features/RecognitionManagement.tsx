@@ -1,9 +1,15 @@
 import React, { useEffect, useState, useRef } from 'react';
 import axios from 'axios';
+import { useAuth } from '../services/auth';
 
 const PAGE_SIZE_OPTIONS = [5, 10, 20, 50, 100];
 
-const RecognitionManagement: React.FC = () => {
+type RecognitionManagementProps = {
+  showTable?: boolean;
+};
+
+const RecognitionManagement: React.FC<RecognitionManagementProps> = ({ showTable = true }) => {
+  const { user } = useAuth();
   const [allRecognitions, setAllRecognitions] = useState<any[]>([]); // Store all recognitions for frontend filtering
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -18,8 +24,7 @@ const RecognitionManagement: React.FC = () => {
     category: '',
     level: '',
     awardPoints: '',
-    senderName: '',
-    recipientName: '',
+    recipientId: '',
     message: '',
   });
   const [creating, setCreating] = useState(false);
@@ -31,6 +36,9 @@ const RecognitionManagement: React.FC = () => {
   const [filterValue, setFilterValue] = useState<string | null>(null);
 
   const [search, setSearch] = useState('');
+
+  const [scopeNames, setScopeNames] = useState<string[]>([]);
+  const norm = (v: any) => (typeof v === 'string' ? v.trim().toLowerCase() : v ?? '');
 
   const sortableColumns = [
     { key: 'id', label: 'ID' },
@@ -49,39 +57,46 @@ const RecognitionManagement: React.FC = () => {
   const filterableKeys = ["recognitionTypeName", "category", "level", "approvalStatus"];
   const sortableArrowKeys = ["id", "awardPoints", "sentAt"];
 
-  const sortRecognitions = (data: any[]) => {
-    return [...data].sort((a, b) => {
-      let aVal = a[sortField];
-      let bVal = b[sortField];
-      // Special handling for date
-      if (sortField === 'sentAt') {
-        aVal = a.sentAt || a.createdAt || 0;
-        bVal = b.sentAt || b.createdAt || 0;
+  useEffect(() => {
+    if (!user) return;
+    axios.get('/employees?page=0&size=5000').then(res => {
+      const list: any[] = Array.isArray(res.data) ? res.data : (res.data.content || []);
+      const names = new Set<string>();
+      const fullName = (e: any) => [e.firstName, e.lastName].filter(Boolean).join(' ').trim();
+      if (user.role === 'employee') {
+        const selfEmp = list.find((e: any) => norm(e.email) === norm(user.email));
+        if (selfEmp) names.add(fullName(selfEmp));
+      } else if (user.role === 'teamlead') {
+        const tl = list.find((e: any) => norm(e.email) === norm(user.email));
+        const managerId = tl?.id ?? tl?.employeeId ?? tl?.managerId ?? null;
+        list.filter((e: any) => e.managerId === managerId).forEach((e: any) => names.add(fullName(e)));
+        if (tl) names.add(fullName(tl));
+      } else if (user.role === 'manager') {
+        const mgr = list.find((e: any) => norm(e.email) === norm(user.email));
+        const unitId = mgr?.unitId ?? user.unitId;
+        list.filter((e: any) => String(e.unitId) === String(unitId)).forEach((e: any) => names.add(fullName(e)));
+        if (mgr) names.add(fullName(mgr));
       }
-      // Handle null/undefined
-      if (aVal === undefined || aVal === null) aVal = '';
-      if (bVal === undefined || bVal === null) bVal = '';
-      // Numeric sort if both are numbers
-      if (!isNaN(Number(aVal)) && !isNaN(Number(bVal))) {
-        aVal = Number(aVal);
-        bVal = Number(bVal);
-      } else {
-        aVal = String(aVal).toLowerCase();
-        bVal = String(bVal).toLowerCase();
-      }
-      if (aVal < bVal) return sortOrder === 'asc' ? -1 : 1;
-      if (aVal > bVal) return sortOrder === 'asc' ? 1 : -1;
-      return 0;
+      setScopeNames(Array.from(names));
+    }).catch(() => {
+      setScopeNames([]);
     });
-  };
+  }, [user]);
 
-  // Fetch all recognitions for frontend filtering/pagination
   const fetchAllRecognitions = async () => {
     setLoading(true);
     setError('');
     try {
       const res = await axios.get(`/recognitions?page=0&size=10000`);
-      setAllRecognitions(Array.isArray(res.data) ? res.data : (res.data.content || []));
+      const data = Array.isArray(res.data) ? res.data : (res.data.content || []);
+      // Apply strict scoping by employees' full names
+      const nameSet = new Set(scopeNames);
+      const scoped = data.filter((rec: any) => {
+        const s = rec.senderName || '';
+        const r = rec.recipientName || '';
+        return nameSet.has(s) || nameSet.has(r);
+      });
+      setAllRecognitions(scoped);
     } catch (err: any) {
       setError('Failed to fetch recognitions from the backend. Please check if the backend is running and the endpoint is correct.');
       setAllRecognitions([]);
@@ -93,9 +108,8 @@ const RecognitionManagement: React.FC = () => {
   useEffect(() => {
     fetchAllRecognitions();
     // eslint-disable-next-line
-  }, []);
+  }, [user, scopeNames]);
 
-  // Ensure table updates on sort/page change if recognitions are loaded
   useEffect(() => {
     if (allRecognitions.length > 0) {
       updateFrontendPage(page, pageSize);
@@ -204,18 +218,23 @@ const RecognitionManagement: React.FC = () => {
     setCreateError('');
     setCreateSuccess('');
     try {
-      // You may need to map names to IDs/UUIDs in a real app
-      await axios.post('/recognitions', {
+      // Build payload using current user as sender and recipient derived from ID
+      const recipient = employeesList.find(e => String(e.id) === String(createForm.recipientId) || String(e.employeeId) === String(createForm.recipientId));
+      const payload: any = {
         recognitionTypeName: createForm.recognitionTypeName,
         category: createForm.category,
         level: createForm.level,
         awardPoints: Number(createForm.awardPoints),
-        senderName: createForm.senderName,
-        recipientName: createForm.recipientName,
+        senderEmail: user?.email,
+        senderName: user ? (user.email.split('@')[0]) : undefined,
+        recipientId: recipient?.id ?? recipient?.employeeId,
+        recipientEmail: recipient?.email,
+        recipientName: recipient ? [recipient.firstName, recipient.lastName].filter(Boolean).join(' ') : undefined,
         message: createForm.message,
-      });
+      };
+      await axios.post('/recognitions', payload);
       setCreateSuccess('Recognition created successfully');
-      setCreateForm({ recognitionTypeName: '', category: '', level: '', awardPoints: '', senderName: '', recipientName: '', message: '' });
+      setCreateForm({ recognitionTypeName: '', category: '', level: '', awardPoints: '', recipientId: '', message: '' });
       // Reload recognitions
       setTimeout(() => window.location.reload(), 500); // quick reload for demo
     } catch (err: any) {
@@ -250,6 +269,119 @@ const RecognitionManagement: React.FC = () => {
     setFilterField(null);
   };
 
+  // Recognition type metadata
+  const [typeOptions, setTypeOptions] = useState<string[]>([]);
+  const [categoryOptions, setCategoryOptions] = useState<string[]>([
+    'Team Player',
+    'Innovation',
+    'Great Job',
+    'Awesome Work',
+    'Milestone Achieved',
+  ]);
+  const [levelOptions, setLevelOptions] = useState<string[]>([]);
+  const [pointsOptions, setPointsOptions] = useState<number[]>([0, 5, 10, 25, 50, 100]);
+
+  // Employees for recipient dropdown
+  const [employeesList, setEmployeesList] = useState<any[]>([]);
+
+  useEffect(() => {
+    // Fetch recognition types metadata
+    axios.get('/recognition-types?page=0&size=1000').then(res => {
+      const data = Array.isArray(res.data) ? res.data : (res.data.content || res.data.items || []);
+      // Map common possible keys: name, recognitionTypeName, type, typeName
+      const rawTypes = data
+        .map((d: any) => d?.name ?? d?.recognitionTypeName ?? d?.type ?? d?.typeName)
+        .filter((v: any) => typeof v === 'string') as string[];
+      const types: string[] = Array.from(new Set(rawTypes.map((t: string) => t.trim()).filter((t: string) => t.length > 0)));
+      setTypeOptions(types.length > 0 ? types : ['award', 'ecard_with_points', 'ecard']);
+      // levels will be fixed for 'award'
+      setLevelOptions(['gold', 'silver', 'bronze']);
+      // Points: derive common values if present
+      const pts: number[] = Array.from(new Set(
+        (data as any[])
+          .map((d: any) => Number(d.awardPoints ?? d.points))
+          .filter((n: any): n is number => typeof n === 'number' && !isNaN(n))
+      ));
+      if (pts.length > 0) setPointsOptions(pts.sort((a: number, b: number) => a - b));
+     }).catch(() => {
+       // Defaults if service fails
+       setTypeOptions(['award', 'ecard_with_points', 'ecard']);
+       setLevelOptions(['gold', 'silver', 'bronze']);
+       setPointsOptions([0, 5, 10, 25, 50, 100]);
+     });
+    // Fetch employees for recipient dropdown
+    axios.get('/employees?page=0&size=5000').then(res => {
+      const list = Array.isArray(res.data) ? res.data : (res.data.content || res.data.items || []);
+      setEmployeesList(list);
+    }).catch(() => {
+      setEmployeesList([]);
+    });
+    // Fetch more categories from recognitions backend
+    axios.get('/recognitions?page=0&size=10000').then(res => {
+      const data = Array.isArray(res.data) ? res.data : (res.data.content || res.data.items || []);
+      const rawCats: string[] = data
+        .map((r: any) => r.category)
+        .filter((v: any): v is string => typeof v === 'string')
+        .map((s: string) => s.trim())
+        .filter((s: string) => s.length > 0);
+      const cats: string[] = Array.from(new Set<string>(rawCats));
+      if (cats.length > 0) {
+        setCategoryOptions((prev: string[]) => {
+          const merged: string[] = [...prev, ...cats];
+          const uniq: string[] = Array.from(new Set<string>(merged));
+          return uniq;
+        });
+      }
+    }).catch(() => {
+      // ignore; keep existing categories
+    });
+  }, []);
+
+  // Dynamic behavior based on selected type and level
+  const isAward = createForm.recognitionTypeName.toLowerCase() === 'award';
+  const isEcard = createForm.recognitionTypeName.toLowerCase() === 'ecard';
+  const isEcardWithPoints = createForm.recognitionTypeName.toLowerCase() === 'ecard_with_points';
+
+  useEffect(() => {
+    // When type changes, adjust available level/points and clear fields accordingly
+    if (isAward) {
+      // fixed levels
+      setLevelOptions(['gold', 'silver', 'bronze']);
+      // remove manual points dropdown by setting auto value on level
+      if (createForm.level === 'gold') setCreateForm(prev => ({ ...prev, awardPoints: String(30) }));
+      else if (createForm.level === 'silver') setCreateForm(prev => ({ ...prev, awardPoints: String(25) }));
+      else if (createForm.level === 'bronze') setCreateForm(prev => ({ ...prev, awardPoints: String(20) }));
+      else {
+        // default to gold
+        setCreateForm(prev => ({ ...prev, level: 'gold', awardPoints: String(30) }));
+      }
+      // pointsOptions not used for award; reset to empty to ensure dropdown hides values if condition changes
+      setPointsOptions([]);
+    } else if (isEcardWithPoints) {
+      // No level; points only 5,10,15
+      setCreateForm(prev => ({ ...prev, level: '', awardPoints: prev.awardPoints && ['5','10','15'].includes(prev.awardPoints) ? prev.awardPoints : '5' }));
+      setPointsOptions([5, 10, 15]);
+    } else if (isEcard) {
+      // No level; no points
+      setCreateForm(prev => ({ ...prev, level: '', awardPoints: '' }));
+      setPointsOptions([]);
+    } else {
+      // Other types: clear level, use generic points options
+      setCreateForm(prev => ({ ...prev, level: '', awardPoints: prev.awardPoints }));
+      // restore generic options (ensure something present)
+      setPointsOptions((opts) => (opts.length ? opts : [0, 5, 10, 25, 50, 100]));
+    }
+    // eslint-disable-next-line
+  }, [createForm.recognitionTypeName]);
+
+  // When level changes under 'award', auto-set points
+  useEffect(() => {
+    if (!isAward) return;
+    if (createForm.level === 'gold') setCreateForm(prev => ({ ...prev, awardPoints: String(30) }));
+    else if (createForm.level === 'silver') setCreateForm(prev => ({ ...prev, awardPoints: String(25) }));
+    else if (createForm.level === 'bronze') setCreateForm(prev => ({ ...prev, awardPoints: String(20) }));
+  }, [createForm.level, isAward]);
+
   return (
     <div style={{ width: '100%', minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
       <h2 style={{ textAlign: 'center', marginBottom: 24, fontSize: '1.7rem', fontWeight: 600 }}>Recognition Management</h2>
@@ -257,17 +389,46 @@ const RecognitionManagement: React.FC = () => {
       {createError && <div style={{ color: 'red', marginBottom: 10, fontSize: '1rem', textAlign: 'center' }}>{createError}</div>}
       {createSuccess && <div style={{ color: 'green', marginBottom: 10, fontSize: '1rem', textAlign: 'center' }}>{createSuccess}</div>}
       <form onSubmit={handleCreate} style={{ width: '100%', display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 20, alignItems: 'center', background: '#fff', padding: 10, borderRadius: 8, boxShadow: '0 2px 8px #e0e0e0', fontSize: '0.7rem', justifyContent: 'center' }}>
-        <input name="recognitionTypeName" placeholder="Type" value={createForm.recognitionTypeName} onChange={handleCreateInputChange} required style={{ flex: '1 1 100px', fontSize: '0.7rem', padding: 6 }} />
-        <input name="category" placeholder="Category" value={createForm.category} onChange={handleCreateInputChange} required style={{ flex: '1 1 100px', fontSize: '0.7rem', padding: 6 }} />
-        <input name="level" placeholder="Level" value={createForm.level} onChange={handleCreateInputChange} style={{ flex: '1 1 70px', fontSize: '0.7rem', padding: 6 }} />
-        <input name="awardPoints" placeholder="Points" value={createForm.awardPoints} onChange={handleCreateInputChange} style={{ flex: '1 1 70px', fontSize: '0.7rem', padding: 6 }} />
-        <input name="senderName" placeholder="Sender Name" value={createForm.senderName} onChange={handleCreateInputChange} required style={{ flex: '1 1 100px', fontSize: '0.7rem', padding: 6 }} />
-        <input name="recipientName" placeholder="Recipient Name" value={createForm.recipientName} onChange={handleCreateInputChange} required style={{ flex: '1 1 100px', fontSize: '0.7rem', padding: 6 }} />
+        {/* Type dropdown */}
+        <select name="recognitionTypeName" value={createForm.recognitionTypeName} onChange={handleCreateInputChange} required style={{ flex: '1 1 140px', fontSize: '0.7rem', padding: 6 }}>
+          <option value="">Select Type</option>
+          {typeOptions.map(t => <option key={t} value={t}>{t}</option>)}
+        </select>
+        {/* Category dropdown */}
+        <select name="category" value={createForm.category} onChange={handleCreateInputChange} required style={{ flex: '1 1 140px', fontSize: '0.7rem', padding: 6 }}>
+          <option value="">Select Category</option>
+          {categoryOptions.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
+        {/* Level dropdown (only for award type) */}
+        {isAward && (
+          <select name="level" value={createForm.level} onChange={handleCreateInputChange} style={{ flex: '1 1 120px', fontSize: '0.7rem', padding: 6 }}>
+            <option value="">Select Level</option>
+            {levelOptions.map(l => <option key={l} value={l}>{l}</option>)}
+          </select>
+        )}
+        {/* Points dropdown: award auto-set by level; ecard_with_points limited; ecard none */}
+        {!isAward && !isEcard && (
+          <select name="awardPoints" value={createForm.awardPoints} onChange={handleCreateInputChange} style={{ flex: '1 1 100px', fontSize: '0.7rem', padding: 6 }}>
+            <option value="">Points</option>
+            {pointsOptions.map(p => <option key={p} value={p}>{p}</option>)}
+          </select>
+        )}
+        {/* Recipient ID dropdown */}
+        <select name="recipientId" value={createForm.recipientId} onChange={handleCreateInputChange} required style={{ flex: '1 1 180px', fontSize: '0.7rem', padding: 6 }}>
+          <option value="">Select Recipient</option>
+          {employeesList.map(emp => (
+            <option key={emp.id ?? emp.employeeId} value={emp.id ?? emp.employeeId}>
+              {emp.firstName} {emp.lastName} ({emp.email})
+            </option>
+          ))}
+        </select>
+        {/* Message */}
         <input name="message" placeholder="Message" value={createForm.message} onChange={handleCreateInputChange} required style={{ flex: '2 1 160px', fontSize: '0.7rem', padding: 6 }} />
         <div style={{ flex: '1 1 100%', display: 'flex', justifyContent: 'center', gap: 10 }}>
           <button type="submit" disabled={creating} style={{ background: '#1976d2', color: '#fff', border: 'none', borderRadius: 6, padding: '7px 14px', fontSize: '0.7rem', cursor: 'pointer', fontWeight: 500 }}>Create</button>
         </div>
       </form>
+      {showTable && (
       <div style={{ marginBottom: 14, display: 'flex', alignItems: 'center', gap: 14, fontSize: '0.7rem', justifyContent: 'center', width: '100%' }}>
         <label>Page Size:</label>
         <select value={pageSize} onChange={handlePageSizeChange} style={{ padding: 5, fontSize: '0.7rem' }}>
@@ -283,6 +444,7 @@ const RecognitionManagement: React.FC = () => {
           <button onClick={() => handlePageChange(page + 1)} disabled={page + 1 >= totalPages} style={{ padding: '6px 12px', fontSize: '0.7rem', background: '#eee', border: '1px solid #ccc', borderRadius: 6, cursor: page + 1 >= totalPages ? 'not-allowed' : 'pointer' }}>Next</button>
         </div>
       </div>
+      )}
       {/* Move search box below the page section */}
       <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8, width: '100%' }}>
         <input
@@ -298,6 +460,7 @@ const RecognitionManagement: React.FC = () => {
           </button>
         )}
       </div>
+      {showTable && (
       <table style={{ width: '100%', fontSize: '0.7rem', background: '#fff', borderRadius: 8, boxShadow: '0 2px 8px #e0e0e0' }}>
         <thead>
           <tr style={{ background: '#8da1bd' }}>
@@ -357,7 +520,8 @@ const RecognitionManagement: React.FC = () => {
           ))}
         </tbody>
       </table>
-      {!loading && !error && getPagedRecognitions().length === 0 && (
+      )}
+      {showTable && !loading && !error && getPagedRecognitions().length === 0 && (
         <div style={{ fontSize: '0.7rem', color: '#888', marginTop: 12 }}>No recognitions found.</div>
       )}
     </div>

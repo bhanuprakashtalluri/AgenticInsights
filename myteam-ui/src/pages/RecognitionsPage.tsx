@@ -10,9 +10,8 @@ const RecognitionsPage: React.FC = () => {
       <div style={{ width: SIDEBAR_WIDTH, minWidth: SIDEBAR_WIDTH, height: '100vh', position: 'relative', zIndex: 2 }}>
         <Sidebar />
       </div>
-      <div style={{ flex: 1, padding: 32, display: 'flex', flexDirection: 'column', alignItems: 'center', background: '#f5f7fa', borderRadius: 12, boxShadow: '0 4px 16px #e0e0e0', minHeight: '100vh' }}>
-        <h2 style={{ textAlign: 'center', marginBottom: 18, fontSize: '1.3rem', fontWeight: 600 }}>Recognitions</h2>
-        <RecognitionManagement />
+      <div style={{ flex: 1, padding: 24, display: 'flex', flexDirection: 'column', alignItems: 'center', background: '#f5f7fa', minHeight: '100vh' }}>
+        <RecognitionManagement showTable={true} />
       </div>
     </div>
   );

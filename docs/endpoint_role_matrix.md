@@ -99,6 +99,13 @@ This document lists all major API endpoints in the application and specifies whi
 
 ---
 
+## Agent Endpoints (`/api/agent`)
+| Endpoint                | Method | ADMIN | MANAGER | TEAMLEAD | EMPLOYEE | Notes |
+|-------------------------|--------|:-----:|:-------:|:--------:|:--------:|-------|
+| `/api/agent/execute`    | POST   |   ✓   |    ✓    |    ✓     |    ✓     | RBAC enforced in service based on role |
+
+---
+
 ## Notes
 - Endpoints like `/admin/*`, `/api/auth/sync-users`, and `/recognition-types` (POST/PUT/DELETE) should be restricted to ADMIN only, but may not be explicitly enforced in code. Consider adding `@PreAuthorize` or similar annotations for these.
 - Employees can only access their own info and recognitions (sent/received by them).
@@ -108,4 +115,3 @@ This document lists all major API endpoints in the application and specifies whi
 ---
 
 If you need a more detailed mapping for any specific controller or want to enforce stricter access, let me know!
-
