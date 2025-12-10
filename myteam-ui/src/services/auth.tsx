@@ -5,6 +5,8 @@ export type AuthUser = {
   email: string;
   role: string;
   isAuthenticated: boolean;
+  unitId?: string; // Add this if your backend provides it
+  teamleadId?: string; // Add this if your backend provides it
 };
 
 const AuthContext = createContext<{
@@ -25,6 +27,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         email: res.data.email,
         role: (res.data.role || '').toLowerCase(), // normalize to lowercase
         isAuthenticated: true,
+        unitId: res.data.unitId, // if available
+        teamleadId: res.data.teamleadId, // if available
       });
     }).catch(() => {
       setUser(null);

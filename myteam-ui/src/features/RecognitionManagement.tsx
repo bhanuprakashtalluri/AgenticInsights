@@ -1,9 +1,15 @@
 import React, { useEffect, useState, useRef } from 'react';
 import axios from 'axios';
+import { useAuth } from '../services/auth';
 
 const PAGE_SIZE_OPTIONS = [5, 10, 20, 50, 100];
 
-const RecognitionManagement: React.FC = () => {
+type RecognitionManagementProps = {
+  showTable?: boolean;
+};
+
+const RecognitionManagement: React.FC<RecognitionManagementProps> = ({ showTable = true }) => {
+  const { user } = useAuth();
   const [allRecognitions, setAllRecognitions] = useState<any[]>([]); // Store all recognitions for frontend filtering
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -32,6 +38,9 @@ const RecognitionManagement: React.FC = () => {
 
   const [search, setSearch] = useState('');
 
+  const [scopeNames, setScopeNames] = useState<string[]>([]);
+  const norm = (v: any) => (typeof v === 'string' ? v.trim().toLowerCase() : v ?? '');
+
   const sortableColumns = [
     { key: 'id', label: 'ID' },
     { key: 'recognitionTypeName', label: 'Type' },
@@ -49,39 +58,46 @@ const RecognitionManagement: React.FC = () => {
   const filterableKeys = ["recognitionTypeName", "category", "level", "approvalStatus"];
   const sortableArrowKeys = ["id", "awardPoints", "sentAt"];
 
-  const sortRecognitions = (data: any[]) => {
-    return [...data].sort((a, b) => {
-      let aVal = a[sortField];
-      let bVal = b[sortField];
-      // Special handling for date
-      if (sortField === 'sentAt') {
-        aVal = a.sentAt || a.createdAt || 0;
-        bVal = b.sentAt || b.createdAt || 0;
+  useEffect(() => {
+    if (!user) return;
+    axios.get('/employees?page=0&size=5000').then(res => {
+      const list: any[] = Array.isArray(res.data) ? res.data : (res.data.content || []);
+      const names = new Set<string>();
+      const fullName = (e: any) => [e.firstName, e.lastName].filter(Boolean).join(' ').trim();
+      if (user.role === 'employee') {
+        const selfEmp = list.find((e: any) => norm(e.email) === norm(user.email));
+        if (selfEmp) names.add(fullName(selfEmp));
+      } else if (user.role === 'teamlead') {
+        const tl = list.find((e: any) => norm(e.email) === norm(user.email));
+        const managerId = tl?.id ?? tl?.employeeId ?? tl?.managerId ?? null;
+        list.filter((e: any) => e.managerId === managerId).forEach((e: any) => names.add(fullName(e)));
+        if (tl) names.add(fullName(tl));
+      } else if (user.role === 'manager') {
+        const mgr = list.find((e: any) => norm(e.email) === norm(user.email));
+        const unitId = mgr?.unitId ?? user.unitId;
+        list.filter((e: any) => String(e.unitId) === String(unitId)).forEach((e: any) => names.add(fullName(e)));
+        if (mgr) names.add(fullName(mgr));
       }
-      // Handle null/undefined
-      if (aVal === undefined || aVal === null) aVal = '';
-      if (bVal === undefined || bVal === null) bVal = '';
-      // Numeric sort if both are numbers
-      if (!isNaN(Number(aVal)) && !isNaN(Number(bVal))) {
-        aVal = Number(aVal);
-        bVal = Number(bVal);
-      } else {
-        aVal = String(aVal).toLowerCase();
-        bVal = String(bVal).toLowerCase();
-      }
-      if (aVal < bVal) return sortOrder === 'asc' ? -1 : 1;
-      if (aVal > bVal) return sortOrder === 'asc' ? 1 : -1;
-      return 0;
+      setScopeNames(Array.from(names));
+    }).catch(() => {
+      setScopeNames([]);
     });
-  };
+  }, [user]);
 
-  // Fetch all recognitions for frontend filtering/pagination
   const fetchAllRecognitions = async () => {
     setLoading(true);
     setError('');
     try {
       const res = await axios.get(`/recognitions?page=0&size=10000`);
-      setAllRecognitions(Array.isArray(res.data) ? res.data : (res.data.content || []));
+      const data = Array.isArray(res.data) ? res.data : (res.data.content || []);
+      // Apply strict scoping by employees' full names
+      const nameSet = new Set(scopeNames);
+      const scoped = data.filter((rec: any) => {
+        const s = rec.senderName || '';
+        const r = rec.recipientName || '';
+        return nameSet.has(s) || nameSet.has(r);
+      });
+      setAllRecognitions(scoped);
     } catch (err: any) {
       setError('Failed to fetch recognitions from the backend. Please check if the backend is running and the endpoint is correct.');
       setAllRecognitions([]);
@@ -93,9 +109,8 @@ const RecognitionManagement: React.FC = () => {
   useEffect(() => {
     fetchAllRecognitions();
     // eslint-disable-next-line
-  }, []);
+  }, [user, scopeNames]);
 
-  // Ensure table updates on sort/page change if recognitions are loaded
   useEffect(() => {
     if (allRecognitions.length > 0) {
       updateFrontendPage(page, pageSize);
@@ -268,6 +283,7 @@ const RecognitionManagement: React.FC = () => {
           <button type="submit" disabled={creating} style={{ background: '#1976d2', color: '#fff', border: 'none', borderRadius: 6, padding: '7px 14px', fontSize: '0.7rem', cursor: 'pointer', fontWeight: 500 }}>Create</button>
         </div>
       </form>
+      {showTable && (
       <div style={{ marginBottom: 14, display: 'flex', alignItems: 'center', gap: 14, fontSize: '0.7rem', justifyContent: 'center', width: '100%' }}>
         <label>Page Size:</label>
         <select value={pageSize} onChange={handlePageSizeChange} style={{ padding: 5, fontSize: '0.7rem' }}>
@@ -283,6 +299,7 @@ const RecognitionManagement: React.FC = () => {
           <button onClick={() => handlePageChange(page + 1)} disabled={page + 1 >= totalPages} style={{ padding: '6px 12px', fontSize: '0.7rem', background: '#eee', border: '1px solid #ccc', borderRadius: 6, cursor: page + 1 >= totalPages ? 'not-allowed' : 'pointer' }}>Next</button>
         </div>
       </div>
+      )}
       {/* Move search box below the page section */}
       <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8, width: '100%' }}>
         <input
@@ -298,6 +315,7 @@ const RecognitionManagement: React.FC = () => {
           </button>
         )}
       </div>
+      {showTable && (
       <table style={{ width: '100%', fontSize: '0.7rem', background: '#fff', borderRadius: 8, boxShadow: '0 2px 8px #e0e0e0' }}>
         <thead>
           <tr style={{ background: '#8da1bd' }}>
@@ -357,7 +375,8 @@ const RecognitionManagement: React.FC = () => {
           ))}
         </tbody>
       </table>
-      {!loading && !error && getPagedRecognitions().length === 0 && (
+      )}
+      {showTable && !loading && !error && getPagedRecognitions().length === 0 && (
         <div style={{ fontSize: '0.7rem', color: '#888', marginTop: 12 }}>No recognitions found.</div>
       )}
     </div>
