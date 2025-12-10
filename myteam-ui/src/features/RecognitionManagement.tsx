@@ -24,8 +24,7 @@ const RecognitionManagement: React.FC<RecognitionManagementProps> = ({ showTable
     category: '',
     level: '',
     awardPoints: '',
-    senderName: '',
-    recipientName: '',
+    recipientId: '',
     message: '',
   });
   const [creating, setCreating] = useState(false);
@@ -219,18 +218,23 @@ const RecognitionManagement: React.FC<RecognitionManagementProps> = ({ showTable
     setCreateError('');
     setCreateSuccess('');
     try {
-      // You may need to map names to IDs/UUIDs in a real app
-      await axios.post('/recognitions', {
+      // Build payload using current user as sender and recipient derived from ID
+      const recipient = employeesList.find(e => String(e.id) === String(createForm.recipientId) || String(e.employeeId) === String(createForm.recipientId));
+      const payload: any = {
         recognitionTypeName: createForm.recognitionTypeName,
         category: createForm.category,
         level: createForm.level,
         awardPoints: Number(createForm.awardPoints),
-        senderName: createForm.senderName,
-        recipientName: createForm.recipientName,
+        senderEmail: user?.email,
+        senderName: user ? (user.email.split('@')[0]) : undefined,
+        recipientId: recipient?.id ?? recipient?.employeeId,
+        recipientEmail: recipient?.email,
+        recipientName: recipient ? [recipient.firstName, recipient.lastName].filter(Boolean).join(' ') : undefined,
         message: createForm.message,
-      });
+      };
+      await axios.post('/recognitions', payload);
       setCreateSuccess('Recognition created successfully');
-      setCreateForm({ recognitionTypeName: '', category: '', level: '', awardPoints: '', senderName: '', recipientName: '', message: '' });
+      setCreateForm({ recognitionTypeName: '', category: '', level: '', awardPoints: '', recipientId: '', message: '' });
       // Reload recognitions
       setTimeout(() => window.location.reload(), 500); // quick reload for demo
     } catch (err: any) {
@@ -265,6 +269,119 @@ const RecognitionManagement: React.FC<RecognitionManagementProps> = ({ showTable
     setFilterField(null);
   };
 
+  // Recognition type metadata
+  const [typeOptions, setTypeOptions] = useState<string[]>([]);
+  const [categoryOptions, setCategoryOptions] = useState<string[]>([
+    'Team Player',
+    'Innovation',
+    'Great Job',
+    'Awesome Work',
+    'Milestone Achieved',
+  ]);
+  const [levelOptions, setLevelOptions] = useState<string[]>([]);
+  const [pointsOptions, setPointsOptions] = useState<number[]>([0, 5, 10, 25, 50, 100]);
+
+  // Employees for recipient dropdown
+  const [employeesList, setEmployeesList] = useState<any[]>([]);
+
+  useEffect(() => {
+    // Fetch recognition types metadata
+    axios.get('/recognition-types?page=0&size=1000').then(res => {
+      const data = Array.isArray(res.data) ? res.data : (res.data.content || res.data.items || []);
+      // Map common possible keys: name, recognitionTypeName, type, typeName
+      const rawTypes = data
+        .map((d: any) => d?.name ?? d?.recognitionTypeName ?? d?.type ?? d?.typeName)
+        .filter((v: any) => typeof v === 'string') as string[];
+      const types: string[] = Array.from(new Set(rawTypes.map((t: string) => t.trim()).filter((t: string) => t.length > 0)));
+      setTypeOptions(types.length > 0 ? types : ['award', 'ecard_with_points', 'ecard']);
+      // levels will be fixed for 'award'
+      setLevelOptions(['gold', 'silver', 'bronze']);
+      // Points: derive common values if present
+      const pts: number[] = Array.from(new Set(
+        (data as any[])
+          .map((d: any) => Number(d.awardPoints ?? d.points))
+          .filter((n: any): n is number => typeof n === 'number' && !isNaN(n))
+      ));
+      if (pts.length > 0) setPointsOptions(pts.sort((a: number, b: number) => a - b));
+     }).catch(() => {
+       // Defaults if service fails
+       setTypeOptions(['award', 'ecard_with_points', 'ecard']);
+       setLevelOptions(['gold', 'silver', 'bronze']);
+       setPointsOptions([0, 5, 10, 25, 50, 100]);
+     });
+    // Fetch employees for recipient dropdown
+    axios.get('/employees?page=0&size=5000').then(res => {
+      const list = Array.isArray(res.data) ? res.data : (res.data.content || res.data.items || []);
+      setEmployeesList(list);
+    }).catch(() => {
+      setEmployeesList([]);
+    });
+    // Fetch more categories from recognitions backend
+    axios.get('/recognitions?page=0&size=10000').then(res => {
+      const data = Array.isArray(res.data) ? res.data : (res.data.content || res.data.items || []);
+      const rawCats: string[] = data
+        .map((r: any) => r.category)
+        .filter((v: any): v is string => typeof v === 'string')
+        .map((s: string) => s.trim())
+        .filter((s: string) => s.length > 0);
+      const cats: string[] = Array.from(new Set<string>(rawCats));
+      if (cats.length > 0) {
+        setCategoryOptions((prev: string[]) => {
+          const merged: string[] = [...prev, ...cats];
+          const uniq: string[] = Array.from(new Set<string>(merged));
+          return uniq;
+        });
+      }
+    }).catch(() => {
+      // ignore; keep existing categories
+    });
+  }, []);
+
+  // Dynamic behavior based on selected type and level
+  const isAward = createForm.recognitionTypeName.toLowerCase() === 'award';
+  const isEcard = createForm.recognitionTypeName.toLowerCase() === 'ecard';
+  const isEcardWithPoints = createForm.recognitionTypeName.toLowerCase() === 'ecard_with_points';
+
+  useEffect(() => {
+    // When type changes, adjust available level/points and clear fields accordingly
+    if (isAward) {
+      // fixed levels
+      setLevelOptions(['gold', 'silver', 'bronze']);
+      // remove manual points dropdown by setting auto value on level
+      if (createForm.level === 'gold') setCreateForm(prev => ({ ...prev, awardPoints: String(30) }));
+      else if (createForm.level === 'silver') setCreateForm(prev => ({ ...prev, awardPoints: String(25) }));
+      else if (createForm.level === 'bronze') setCreateForm(prev => ({ ...prev, awardPoints: String(20) }));
+      else {
+        // default to gold
+        setCreateForm(prev => ({ ...prev, level: 'gold', awardPoints: String(30) }));
+      }
+      // pointsOptions not used for award; reset to empty to ensure dropdown hides values if condition changes
+      setPointsOptions([]);
+    } else if (isEcardWithPoints) {
+      // No level; points only 5,10,15
+      setCreateForm(prev => ({ ...prev, level: '', awardPoints: prev.awardPoints && ['5','10','15'].includes(prev.awardPoints) ? prev.awardPoints : '5' }));
+      setPointsOptions([5, 10, 15]);
+    } else if (isEcard) {
+      // No level; no points
+      setCreateForm(prev => ({ ...prev, level: '', awardPoints: '' }));
+      setPointsOptions([]);
+    } else {
+      // Other types: clear level, use generic points options
+      setCreateForm(prev => ({ ...prev, level: '', awardPoints: prev.awardPoints }));
+      // restore generic options (ensure something present)
+      setPointsOptions((opts) => (opts.length ? opts : [0, 5, 10, 25, 50, 100]));
+    }
+    // eslint-disable-next-line
+  }, [createForm.recognitionTypeName]);
+
+  // When level changes under 'award', auto-set points
+  useEffect(() => {
+    if (!isAward) return;
+    if (createForm.level === 'gold') setCreateForm(prev => ({ ...prev, awardPoints: String(30) }));
+    else if (createForm.level === 'silver') setCreateForm(prev => ({ ...prev, awardPoints: String(25) }));
+    else if (createForm.level === 'bronze') setCreateForm(prev => ({ ...prev, awardPoints: String(20) }));
+  }, [createForm.level, isAward]);
+
   return (
     <div style={{ width: '100%', minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
       <h2 style={{ textAlign: 'center', marginBottom: 24, fontSize: '1.7rem', fontWeight: 600 }}>Recognition Management</h2>
@@ -272,12 +389,40 @@ const RecognitionManagement: React.FC<RecognitionManagementProps> = ({ showTable
       {createError && <div style={{ color: 'red', marginBottom: 10, fontSize: '1rem', textAlign: 'center' }}>{createError}</div>}
       {createSuccess && <div style={{ color: 'green', marginBottom: 10, fontSize: '1rem', textAlign: 'center' }}>{createSuccess}</div>}
       <form onSubmit={handleCreate} style={{ width: '100%', display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 20, alignItems: 'center', background: '#fff', padding: 10, borderRadius: 8, boxShadow: '0 2px 8px #e0e0e0', fontSize: '0.7rem', justifyContent: 'center' }}>
-        <input name="recognitionTypeName" placeholder="Type" value={createForm.recognitionTypeName} onChange={handleCreateInputChange} required style={{ flex: '1 1 100px', fontSize: '0.7rem', padding: 6 }} />
-        <input name="category" placeholder="Category" value={createForm.category} onChange={handleCreateInputChange} required style={{ flex: '1 1 100px', fontSize: '0.7rem', padding: 6 }} />
-        <input name="level" placeholder="Level" value={createForm.level} onChange={handleCreateInputChange} style={{ flex: '1 1 70px', fontSize: '0.7rem', padding: 6 }} />
-        <input name="awardPoints" placeholder="Points" value={createForm.awardPoints} onChange={handleCreateInputChange} style={{ flex: '1 1 70px', fontSize: '0.7rem', padding: 6 }} />
-        <input name="senderName" placeholder="Sender Name" value={createForm.senderName} onChange={handleCreateInputChange} required style={{ flex: '1 1 100px', fontSize: '0.7rem', padding: 6 }} />
-        <input name="recipientName" placeholder="Recipient Name" value={createForm.recipientName} onChange={handleCreateInputChange} required style={{ flex: '1 1 100px', fontSize: '0.7rem', padding: 6 }} />
+        {/* Type dropdown */}
+        <select name="recognitionTypeName" value={createForm.recognitionTypeName} onChange={handleCreateInputChange} required style={{ flex: '1 1 140px', fontSize: '0.7rem', padding: 6 }}>
+          <option value="">Select Type</option>
+          {typeOptions.map(t => <option key={t} value={t}>{t}</option>)}
+        </select>
+        {/* Category dropdown */}
+        <select name="category" value={createForm.category} onChange={handleCreateInputChange} required style={{ flex: '1 1 140px', fontSize: '0.7rem', padding: 6 }}>
+          <option value="">Select Category</option>
+          {categoryOptions.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
+        {/* Level dropdown (only for award type) */}
+        {isAward && (
+          <select name="level" value={createForm.level} onChange={handleCreateInputChange} style={{ flex: '1 1 120px', fontSize: '0.7rem', padding: 6 }}>
+            <option value="">Select Level</option>
+            {levelOptions.map(l => <option key={l} value={l}>{l}</option>)}
+          </select>
+        )}
+        {/* Points dropdown: award auto-set by level; ecard_with_points limited; ecard none */}
+        {!isAward && !isEcard && (
+          <select name="awardPoints" value={createForm.awardPoints} onChange={handleCreateInputChange} style={{ flex: '1 1 100px', fontSize: '0.7rem', padding: 6 }}>
+            <option value="">Points</option>
+            {pointsOptions.map(p => <option key={p} value={p}>{p}</option>)}
+          </select>
+        )}
+        {/* Recipient ID dropdown */}
+        <select name="recipientId" value={createForm.recipientId} onChange={handleCreateInputChange} required style={{ flex: '1 1 180px', fontSize: '0.7rem', padding: 6 }}>
+          <option value="">Select Recipient</option>
+          {employeesList.map(emp => (
+            <option key={emp.id ?? emp.employeeId} value={emp.id ?? emp.employeeId}>
+              {emp.firstName} {emp.lastName} ({emp.email})
+            </option>
+          ))}
+        </select>
+        {/* Message */}
         <input name="message" placeholder="Message" value={createForm.message} onChange={handleCreateInputChange} required style={{ flex: '2 1 160px', fontSize: '0.7rem', padding: 6 }} />
         <div style={{ flex: '1 1 100%', display: 'flex', justifyContent: 'center', gap: 10 }}>
           <button type="submit" disabled={creating} style={{ background: '#1976d2', color: '#fff', border: 'none', borderRadius: 6, padding: '7px 14px', fontSize: '0.7rem', cursor: 'pointer', fontWeight: 500 }}>Create</button>
