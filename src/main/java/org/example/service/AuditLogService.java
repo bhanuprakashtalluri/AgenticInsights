@@ -10,9 +10,9 @@ public class AuditLogService {
     @Autowired
     private AuditLogRepository auditLogRepository;
 
-    public void log(String username, String action, String details) {
+    public String log(String username, String action, String details) {
         AuditLog log = new AuditLog(username, action, details);
-        auditLogRepository.save(log);
+        AuditLog saved = auditLogRepository.save(log);
+        return "audit-" + saved.getId();
     }
 }
-

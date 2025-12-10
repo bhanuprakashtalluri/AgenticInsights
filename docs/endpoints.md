@@ -325,6 +325,45 @@ This document lists all major API endpoints for the backend as of December 9, 20
 
 ---
 
+## 9. Agent Endpoints (`/api/agent`)
+
+### POST `/api/agent/execute`
+- **Headers:** `Content-Type: application/json`, Session cookie
+- **Body:**
+  ```json
+  {
+    "text": "Get employee count",
+    "intent": "query",
+    "payload": {},
+    "preferredChannel": "api",
+    "correlationId": "uuid"
+  }
+  ```
+- **Response:**
+  ```json
+  {
+    "status": "ok",
+    "message": "Execution completed",
+    "steps": ["Parsed request", "Invoked getEmployeeCount tool"],
+    "toolCalls": [
+      {
+        "toolName": "getEmployeeCount",
+        "input": {},
+        "output": {"count": 42},
+        "durationMs": 5,
+        "success": true
+      }
+    ],
+    "auditId": "audit-uuid",
+    "data": null,
+    "errors": []
+  }
+  ```
+- **Roles:** All (RBAC enforced based on role)
+- **Description:** Execute an agent request, invoking tools via MCP Leader.
+
+---
+
 ## Notes
 - All endpoints require authentication via session cookie.
 - Role-based access is strictly enforced for all major endpoints.
@@ -332,4 +371,3 @@ This document lists all major API endpoints for the backend as of December 9, 20
 - Teamleads and managers see only their team's/unit's data.
 - Admins have full access.
 - For more details, see `endpoint_role_matrix.md`.
-
