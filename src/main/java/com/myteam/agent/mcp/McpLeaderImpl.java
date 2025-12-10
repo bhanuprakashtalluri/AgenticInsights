@@ -1,8 +1,10 @@
 package com.myteam.agent.mcp;
 
 import com.myteam.agent.core.dto.ToolInvocation;
+import org.springframework.ai.model.function.FunctionCallback;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -12,6 +14,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class McpLeaderImpl implements McpLeader {
 
     private final Map<String, ToolFunction> tools = new ConcurrentHashMap<>();
+    private final List<FunctionCallback> functionCallbacks = new ArrayList<>();
 
     // Constructor to register mock tools
     public McpLeaderImpl() {
@@ -32,7 +35,35 @@ public class McpLeaderImpl implements McpLeader {
             output.put("id", "mock-recog-" + System.currentTimeMillis());
             return output;
         });
+
+        // Create function callbacks
+        functionCallbacks.add(FunctionCallback.<Void, Map<String, Object>>builder()
+                .function("getEmployeeCount", (Void input) -> getEmployeeCountFunction())
+                .inputType(Void.class)
+                .build());
+
+        functionCallbacks.add(FunctionCallback.<SendRecognitionInput, Map<String, Object>>builder()
+                .function("sendRecognition", (SendRecognitionInput input) -> sendRecognitionFunction(input))
+                .inputType(SendRecognitionInput.class)
+                .build());
     }
+
+    // Function implementations
+    public Map<String, Object> getEmployeeCountFunction() {
+        return invokeTool("getEmployeeCount", Map.of()).getOutput();
+    }
+
+    public Map<String, Object> sendRecognitionFunction(SendRecognitionInput input) {
+        Map<String, Object> params = Map.of(
+                "sender", input.sender(),
+                "recipient", input.recipient(),
+                "message", input.message()
+        );
+        return invokeTool("sendRecognition", params).getOutput();
+    }
+
+    // Record class for input
+    public record SendRecognitionInput(String sender, String recipient, String message) {}
 
     @Override
     public void registerTool(String toolName, ToolFunction toolFunction) {
@@ -59,5 +90,10 @@ public class McpLeaderImpl implements McpLeader {
     @Override
     public List<String> listTools() {
         return List.copyOf(tools.keySet());
+    }
+
+    @Override
+    public List<FunctionCallback> getFunctionCallbacks() {
+        return functionCallbacks;
     }
 }

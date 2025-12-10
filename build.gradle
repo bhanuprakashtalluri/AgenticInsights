@@ -24,6 +24,7 @@ defaultTasks 'clean', 'build'
 
 repositories {
     mavenCentral()
+    maven { url 'https://repo.spring.io/milestone' }
 }
 
 dependencies {
@@ -53,6 +54,9 @@ dependencies {
 
     // Jakarta Servlet API
     implementation 'jakarta.servlet:jakarta.servlet-api:6.0.0'
+
+    // Spring AI
+    implementation 'org.springframework.ai:spring-ai-openai-spring-boot-starter:1.0.0-M4'
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation platform('org.junit:junit-bom:5.10.0')

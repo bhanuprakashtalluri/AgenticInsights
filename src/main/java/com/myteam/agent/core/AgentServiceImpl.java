@@ -1,62 +1,98 @@
 package com.myteam.agent.core;
 
+import com.myteam.agent.ai.FunctionCallingService;
+import com.myteam.agent.ai.PromptService;
 import com.myteam.agent.core.dto.AgentRequest;
 import com.myteam.agent.core.dto.AgentResponse;
 import com.myteam.agent.core.dto.ToolInvocation;
 import com.myteam.agent.core.policy.RbacPolicyMapper;
 import com.myteam.agent.mcp.McpLeader;
-import org.example.service.AuditLogService;
+import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.memory.ChatMemory;
+import org.springframework.ai.chat.memory.InMemoryChatMemory;
+import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 
 @Service
 public class AgentServiceImpl implements AgentService {
-
     @Autowired
     private McpLeader mcpLeader;
 
     @Autowired
-    private AuditLogService auditLogService; // Assuming from existing
+    private ChatModel chatModel;
+
+    @Autowired
+    private PromptService promptService;
+
+    @Autowired
+    private FunctionCallingService functionCallingService;
+
+    @Autowired
+    private com.myteam.agent.memory.ConversationMemoryStore memoryStore;
+
+    @Autowired
+    private com.myteam.agent.memory.InMemoryEmbeddingIndex embeddingIndex;
+
+    private final ChatMemory chatMemory = new InMemoryChatMemory();
 
     @Override
     public AgentResponse execute(AgentRequest request) {
         // Step 1: RBAC Check
         if (!RbacPolicyMapper.canExecuteAgent(request.getRole())) {
-            String auditId = auditLogService.log(request.getActor(), "AGENT_EXECUTE_DENIED", "RBAC denied for role: " + request.getRole());
-            return new AgentResponse("error", "Access denied", List.of("RBAC check"), new ArrayList<>(), auditId, null, List.of("Insufficient permissions"));
+            return new AgentResponse("error", "Access denied", List.of("RBAC check"), new ArrayList<>(), "denied", null, List.of("Insufficient permissions"));
         }
 
-        // Step 2: Mock intent parsing and tool invocation
+        // Step 2: Use PromptService for system prompt
+        var params = Map.<String, Object>of(
+            "role", request.getRole(),
+            "safety", "standard",
+            "redaction", "enabled"
+        );
+        String systemPrompt = promptService.render("system", params);
+
+        // Step 3: Add user turn to memory
+        memoryStore.addTurn(request.getSessionId(), request.getText());
+
+        // Step 4: Retrieve context from embedding index (stub: not used in prompt yet)
+        // Step 5: AI call with prompt
         List<String> steps = new ArrayList<>();
-        steps.add("Parsed request");
+        steps.add("AI processing request");
         List<ToolInvocation> toolCalls = new ArrayList<>();
 
-        if (request.getText().toLowerCase().contains("count")) {
-            ToolInvocation invocation = mcpLeader.invokeTool("getEmployeeCount", Map.of());
-            toolCalls.add(invocation);
-            steps.add("Invoked getEmployeeCount tool");
-        } else if (request.getText().toLowerCase().contains("recognize")) {
-            Map<String, Object> input = Map.of(
-                "sender", request.getActor(),
-                "recipient", "someone@example.com", // mock
-                "message", request.getText()
-            );
-            ToolInvocation invocation = mcpLeader.invokeTool("sendRecognition", input);
-            toolCalls.add(invocation);
-            steps.add("Invoked sendRecognition tool");
-        } else {
-            steps.add("No matching tool found");
+        try {
+            ChatClient chatClient = ChatClient.builder(chatModel)
+                    .defaultAdvisors(new org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor(chatMemory))
+                    .build();
+
+            String response = chatClient.prompt()
+                    .system(systemPrompt)
+                    .user(request.getText())
+                    .advisors(a -> a.param("chat_memory_conversation_id", request.getSessionId()))
+                    .call()
+                    .content();
+
+            // Step 6: Function calling (if intent/toolName present)
+            ToolInvocation toolInvocation = null;
+            if (request.getPayload() != null && request.getPayload().containsKey("toolName")) {
+                toolInvocation = functionCallingService.routeAndCall(request);
+                if (toolInvocation != null) {
+                    toolCalls.add(toolInvocation);
+                }
+            }
+
+            // Step 7: Audit (dropped)
+            String auditId = "dropped";
+
+            // Step 8: Build response
+            return new AgentResponse("ok", response, steps, toolCalls, auditId, null, new ArrayList<>());
+        } catch (Exception e) {
+            String auditId = "dropped";
+            return new AgentResponse("error", e.getMessage(), steps, toolCalls, auditId, null, List.of(e.getMessage()));
         }
-
-        // Step 3: Audit
-        String auditId = auditLogService.log(request.getActor(), "AGENT_EXECUTE_SUCCESS", "Executed with " + toolCalls.size() + " tool calls");
-
-        // Step 4: Build response
-        return new AgentResponse("ok", "Execution completed", steps, toolCalls, auditId, null, new ArrayList<>());
     }
 }

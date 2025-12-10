@@ -1,6 +1,7 @@
 package com.myteam.agent.mcp;
 
 import com.myteam.agent.core.dto.ToolInvocation;
+import org.springframework.ai.model.function.FunctionCallback;
 
 import java.util.List;
 import java.util.Map;
@@ -15,6 +16,9 @@ public interface McpLeader {
 
     // List available tools
     List<String> listTools();
+
+    // Get function callbacks for Spring AI
+    List<FunctionCallback> getFunctionCallbacks();
 
     // Functional interface for tool functions
     @FunctionalInterface
